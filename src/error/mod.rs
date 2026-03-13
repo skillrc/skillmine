@@ -3,19 +3,20 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum SkillmineError {
     #[error("Git error: {0}")]
-    GitError(String),
+    Git(String),
 
     #[error("Registry error: {0}")]
-    RegistryError(String),
+    Registry(String),
 
+    #[allow(dead_code)]
     #[error("Installation error: {0}")]
-    InstallationError(String),
+    Installation(String),
 
     #[error("Configuration error: {0}")]
-    ConfigError(String),
+    Config(String),
 
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 }
 
 pub type Result<T> = std::result::Result<T, SkillmineError>;

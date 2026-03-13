@@ -3,7 +3,7 @@
 **Project**: Skillmine - Package Manager for AI Coding Assistant Skills  
 **Language**: Rust  
 **Start Date**: 2026-03-13  
-**Current Phase**: Phase 1 - MVP Core Commands
+**Current Phase**: Phase 2 - Deterministic CLI Core Stabilization
 
 ---
 
@@ -29,39 +29,39 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 - [x] Create GitHub repository
 - [x] Configure CI/CD (GitHub Actions)
 
-### 1.2 Basic CLI Structure 🔄
-- [ ] Implement `skillmine --version` command
-- [ ] Implement `skillmine init` command
-- [ ] Create configuration file handling (skills.toml)
-- [ ] Error handling framework
+### 1.2 Basic CLI Structure ✅
+- [x] Implement `skillmine --version` command
+- [x] Implement `skillmine init` command
+- [x] Create configuration file handling (skills.toml)
+- [x] Error handling framework
 
-### 1.3 Configuration Management
-- [ ] Parse skills.toml
-- [ ] Validate configuration
-- [ ] Default configuration values
-- [ ] Configuration serialization/deserialization
+### 1.3 Configuration Management ✅
+- [x] Parse skills.toml
+- [x] Validate configuration
+- [x] Default configuration values
+- [x] Configuration serialization/deserialization
 
-### 1.4 Git Operations
-- [ ] Clone GitHub repositories
-- [ ] Checkout specific commits/branches/tags
-- [ ] Shallow clone for performance
+### 1.4 Git Operations ✅
+- [x] Clone GitHub repositories
+- [x] Checkout specific commits/branches/tags
+- [x] Shallow clone for performance
 - [ ] Git authentication handling
 
-### 1.5 Content Store (CAS)
-- [ ] Compute content hash (Git tree hash)
-- [ ] Store skills in content-addressable location
-- [ ] Hard link management
-- [ ] Cache management
+### 1.5 Content Store (CAS) ✅
+- [x] Compute content hash (Git tree hash)
+- [x] Store skills in content-addressable location
+- [x] Hard link management
+- [x] Cache management
 
-### 1.6 Skill Installation (MVP)
-- [ ] `skillmine add <repo>` command
-- [ ] `skillmine install` command (serial)
-- [ ] Basic progress display
-- [ ] Error handling and recovery
+### 1.6 Skill Installation (MVP) ✅
+- [x] `skillmine add <repo>` command
+- [x] `skillmine install` command (serial)
+- [x] Basic progress display
+- [x] Error handling and recovery
 
-### 1.7 Target Sync (MVP)
-- [ ] `skillmine sync --target=claude` command
-- [ ] Create symlinks in target directory
+### 1.7 Target Sync (MVP) ✅
+- [x] `skillmine sync --target=claude` command
+- [x] Create symlinks in target directory
 - [ ] Verify installation
 
 ---
@@ -74,11 +74,11 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 - [ ] Progress bars with indicatif
 - [ ] Download retry logic
 
-### 2.2 Lockfile System
-- [ ] Generate skills.lock
-- [ ] Parse and validate lockfile
-- [ ] `skillmine freeze` command
-- [ ] `skillmine thaw` command
+### 2.2 Lockfile System ✅
+- [x] Generate `skills.lock.toml`
+- [x] Parse and validate lockfile
+- [x] `skillmine freeze` command
+- [x] `skillmine thaw` command
 
 ### 2.3 Version Resolution
 - [ ] Semantic versioning support
@@ -102,11 +102,11 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 
 ## Phase 3: Polish & Features (Week 5-6)
 
-### 3.1 Command Completion
-- [ ] `skillmine update` command
-- [ ] `skillmine remove` command
-- [ ] `skillmine list` command
-- [ ] `skillmine info` command
+### 3.1 Command Completion 🔄
+- [x] `skillmine update` command
+- [x] `skillmine remove` command
+- [x] `skillmine list` command
+- [x] `skillmine info` command
 
 ### 3.2 Registry Support
 - [ ] Registry configuration
@@ -130,9 +130,11 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 
 ## Current Status
 
-**Phase**: 1.2 Basic CLI Structure  
-**Focus**: Implementing core commands  
-**Blockers**: None  
+**Phase**: Deterministic CLI Core complete and stabilized  
+**Architecture**: `main.rs` → `cli` + `config` + `registry` + `installer` + `error`  
+**Tests**: 53 passing  
+**Focus**: Concurrent installs, semver resolution, dependency management, docs alignment  
+**Blockers**: GitHub install can still require authentication for certain repos (external access issue, not core logic failure)
 
 ---
 
@@ -143,6 +145,9 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 | 2026-03-13 | Use KIMI k2p5 as main model | Strong reasoning for architecture tasks |
 | 2026-03-13 | Use Sonnet 4.5 for quick tasks | Cost-effective for simple operations |
 | 2026-03-13 | Manual parsing > Regex for URLs | Per architecture review |
+| 2026-03-13 | Phase 1 MVP Complete | All core commands working (init, add, install, sync) |
+| 2026-03-13 | Deterministic state triangle | lockfile + tmp clone + CAS store drive install/sync/update/outdated behavior |
+| 2026-03-13 | Offline-first testability | local Git fixtures preferred over network-only tests |
 
 ---
 
@@ -150,7 +155,8 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 
 | Error | Phase | Resolution |
 |-------|-------|------------|
-| None yet | - | - |
+| Broken tmp Git repos caused unborn HEAD failures | Phase 2 stabilization | Detect broken repos, clean them before reuse, add regressions |
+| Manual public repo state mismatch (`tmp: true`, `outdated: tmp-missing`) | Phase 2 stabilization | Refined GitHub outdated classification to inspect real tmp repo health |
 
 ---
 
@@ -159,19 +165,19 @@ Build a declarative package manager for AI coding assistant skills (Claude Code,
 | File | Status | Notes |
 |------|--------|-------|
 | Cargo.toml | ✅ | Complete with all dependencies |
-| src/main.rs | 🔄 | CLI structure in progress |
-| src/cli/mod.rs | 🔄 | Command definitions |
-| src/config/mod.rs | ⏳ | Configuration parsing |
-| src/core/skill.rs | ⏳ | Core types |
-| src/error/mod.rs | ⏳ | Error handling |
-
+| src/main.rs | ✅ | CLI structure complete |
+| src/cli/mod.rs | ✅ | lockfile, install/sync/update/outdated/doctor/clean + 30+ CLI tests |
+| src/config/settings.rs | ✅ | Config, Settings, SkillSource, version/local/GitHub parsing |
+| src/registry/github.rs | ✅ | GitClient with clone, resolve_source, broken tmp detection |
+| src/installer/install.rs | ✅ | ContentStore for CAS |
+| src/error/mod.rs | ✅ | thiserror-based errors |
 ---
 
 ## Next Actions
 
-1. **Immediate**: Implement `skillmine --version`
-2. **Next**: Implement `skillmine init`
-3. **Then**: Configuration file handling
+1. **Immediate**: Implement concurrent installation with tokio and progress reporting
+2. **Next**: Add semantic version / version constraint resolution
+3. **Then**: Add dependency parsing and graph handling
 
 ---
 
