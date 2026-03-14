@@ -5,7 +5,9 @@ mod cli;
 mod config;
 mod error;
 mod installer;
+mod manifest;
 mod registry;
+mod tui;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const NAME: &str = env!("CARGO_PKG_NAME");
@@ -64,6 +66,7 @@ enum Commands {
     },
     Outdated,
     Doctor,
+    Tui,
     Clean {
         #[arg(long)]
         all: bool,
@@ -94,6 +97,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Info { name }) => cli::info(name).await?,
         Some(Commands::Outdated) => cli::outdated().await?,
         Some(Commands::Doctor) => cli::doctor().await?,
+        Some(Commands::Tui) => tui::run().await?,
         Some(Commands::Clean { all }) => cli::clean(all).await?,
         None => {
             println!("⛏ Skillmine {}", VERSION);
