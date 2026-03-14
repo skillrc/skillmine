@@ -37,6 +37,20 @@ struct LockedSkill {
     resolved_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SkillSummary {
+    pub name: String,
+    pub source: String,
+    pub statuses: Vec<String>,
+    pub outdated: String,
+    pub lock_summary: String,
+    pub manifest_version: Option<String>,
+    pub skill_version: Option<String>,
+    pub maturity: Option<String>,
+    pub last_verified: Option<String>,
+    pub description: Option<String>,
+}
+
 type ConfigBundle = (
     PathBuf,
     crate::config::Config,
@@ -237,14 +251,17 @@ fn refresh_lockfile_from_current_state(
     let mut lockfile = Lockfile::new(config_path);
 
     for (name, skill) in &config.skills {
-        if let Some(existing) = previous_lockfile.and_then(|lock| lock.get_skill(name)) {
+    if let Some(existing) = previous_lockfile.and_then(|lock| lock.get_skill(name)) {
             if matches!(skill.source, crate::config::SkillSource::GitHub { .. }) {
                 lockfile.skills.push(existing.clone());
                 continue;
             }
         }
 
-        if let Ok(locked_skill) = build_locked_skill(name, skill, &tmp_root) {
+        if let Ok(mut locked_skill) = build_locked_skill(name, skill, &tmp_root) {
+            if let Some(manifest) = load_manifest_for_config_skill(name, skill, &tmp_root) {
+                apply_manifest_to_locked_skill(&mut locked_skill, &manifest);
+            }
             lockfile.skills.push(locked_skill);
         }
     }
@@ -274,6 +291,78 @@ fn cached_or_tmp_source_for_skill(
         crate::config::SkillSource::Local { path } => Some(PathBuf::from(path)),
         crate::config::SkillSource::Version(_) => None,
     }
+}
+
+fn load_manifest_for_config_skill(
+    name: &str,
+    skill: &crate::config::ConfigSkill,
+    tmp_root: &Path,
+) -> Option<crate::manifest::SkillManifest> {
+    match &skill.source {
+        crate::config::SkillSource::GitHub { path, .. } => {
+            crate::manifest::load_manifest(&tmp_root.join(name), path).ok().flatten()
+        }
+        crate::config::SkillSource::Local { path } => {
+            crate::manifest::load_manifest(Path::new(path), &None).ok().flatten()
+        }
+        crate::config::SkillSource::Version(_) => None,
+    }
+}
+
+fn apply_manifest_to_locked_skill(locked_skill: &mut LockedSkill, manifest: &crate::manifest::SkillManifest) {
+    locked_skill.resolved_reference = format!(
+        "{} | manifest:{} | version:{} | maturity:{} | verified:{}",
+        locked_skill.resolved_reference,
+        manifest.manifest_version,
+        manifest.skill.version,
+        manifest.skill.maturity,
+        manifest.skill.last_verified
+    );
+}
+
+fn skill_summary(
+    name: &str,
+    skill: &crate::config::ConfigSkill,
+    lockfile: Option<&Lockfile>,
+    tmp_root: &Path,
+    store: &crate::installer::ContentStore,
+) -> SkillSummary {
+    let statuses = skill_statuses(name, skill, lockfile, tmp_root, store);
+    let locked = lockfile.and_then(|lock| lock.get_skill(name));
+    let manifest = load_manifest_for_config_skill(name, skill, tmp_root);
+
+    SkillSummary {
+        name: name.to_string(),
+        source: describe_skill_source(skill),
+        statuses: statuses.iter().map(|status| match status {
+            SkillStatus::Configured => "configured".to_string(),
+            SkillStatus::Installed => "installed".to_string(),
+            SkillStatus::Cached => "cached".to_string(),
+            SkillStatus::Locked => "locked".to_string(),
+        }).collect(),
+        outdated: format_outdated_state(classify_outdated(skill, locked)).to_string(),
+        lock_summary: describe_locked_skill(locked),
+        manifest_version: manifest.as_ref().map(|entry| entry.manifest_version.clone()),
+        skill_version: manifest.as_ref().map(|entry| entry.skill.version.clone()),
+        maturity: manifest.as_ref().map(|entry| entry.skill.maturity.clone()),
+        last_verified: manifest.as_ref().map(|entry| entry.skill.last_verified.clone()),
+        description: manifest.as_ref().map(|entry| entry.skill.description.clone()),
+    }
+}
+
+pub fn load_skill_summaries() -> Result<Vec<SkillSummary>, Box<dyn std::error::Error>> {
+    let (_, config, _, lockfile) = config_and_lockfile()?;
+    let tmp_root = tmp_root()?;
+    let store = crate::installer::ContentStore::default();
+
+    let mut summaries = Vec::new();
+    for (name, skill) in &config.skills {
+        summaries.push(skill_summary(name, skill, lockfile.as_ref(), &tmp_root, &store));
+    }
+
+    summaries.sort_by(|left, right| left.name.cmp(&right.name));
+
+    Ok(summaries)
 }
 
 fn broken_tmp_repo_path(skill: &crate::config::ConfigSkill, tmp_root: &Path, name: &str) -> Option<PathBuf> {
@@ -755,6 +844,80 @@ pub async fn install(force: bool, verbose: bool) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+pub async fn install_selected(name: Option<String>, force: bool, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if name.is_none() {
+        return install(force, verbose).await;
+    }
+
+    use crate::config::Config;
+    use crate::installer::ContentStore;
+    use crate::registry::GitClient;
+
+    let config_path = Config::find_config()?;
+    let config = Config::load(&config_path)?;
+    let lockfile_path = lockfile_path_for(&config_path);
+    let existing_lockfile = if lockfile_path.exists() {
+        Some(Lockfile::load(&lockfile_path)?)
+    } else {
+        None
+    };
+
+    let selected = name.unwrap();
+    let Some(skill) = config.skills.get(&selected) else {
+        return Err(format!("Skill '{}' not found", selected).into());
+    };
+
+    let store = ContentStore::default();
+    store.init()?;
+
+    let install_dir = tmp_root()?;
+    std::fs::create_dir_all(&install_dir)?;
+
+    match &skill.source {
+        crate::config::SkillSource::GitHub { path, .. } => {
+            let resolved = if let Some(locked) = existing_lockfile
+                .as_ref()
+                .and_then(|lockfile| lockfile.get_skill(&selected))
+            {
+                let skill_dir = install_dir.join(&selected);
+                if skill_dir.exists() {
+                    crate::registry::GitClient::resolve_source(&skill.source, &skill_dir)
+                } else {
+                    let mut resolved = GitClient::clone_and_resolve(&skill.source, &skill_dir, !force)?;
+                    resolved.tree_hash = locked.resolved_tree_hash.clone();
+                    Ok(resolved)
+                }
+            } else {
+                GitClient::clone_and_resolve(&skill.source, &install_dir.join(&selected), !force)
+            }?;
+
+            let source_path = if let Some(subpath) = path {
+                install_dir.join(&selected).join(subpath)
+            } else {
+                install_dir.join(&selected)
+            };
+
+            store.store(&resolved.tree_hash, &source_path)?;
+        }
+        crate::config::SkillSource::Local { path } => {
+            let local_path = PathBuf::from(path);
+            if !local_path.exists() {
+                return Err(format!("Local path for '{}' does not exist", selected).into());
+            }
+            store.store(&format!("local:{}", selected), &local_path)?;
+        }
+        crate::config::SkillSource::Version(_) => {
+            return Err(format!("Skill '{}' is version-only and not installable yet", selected).into());
+        }
+    }
+
+    refresh_lockfile_from_current_state(&config_path, &config, existing_lockfile.as_ref())?;
+    if verbose {
+        println!("✓ Installed '{}'", selected);
+    }
+    Ok(())
+}
+
 pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     use crate::config::Config;
     use crate::installer::ContentStore;
@@ -957,10 +1120,20 @@ pub async fn list(detailed: bool) -> Result<(), Box<dyn std::error::Error>> {
         let outdated_state = format_outdated_state(classify_outdated(skill, lockfile.as_ref().and_then(|lock| lock.get_skill(name))));
         let locked_summary = describe_locked_skill(lockfile.as_ref().and_then(|lock| lock.get_skill(name)));
         if detailed {
+            let summary = skill_summary(name, skill, lockfile.as_ref(), &tmp_root, &store);
             println!("- {} [{}]", name, format_statuses(&statuses));
             println!("  source: {}", describe_skill_source(skill));
             println!("  outdated: {}", outdated_state);
             println!("  {}", locked_summary);
+            if let Some(version) = summary.skill_version {
+                println!("  manifest version: {}", version);
+            }
+            if let Some(maturity) = summary.maturity {
+                println!("  maturity: {}", maturity);
+            }
+            if let Some(last_verified) = summary.last_verified {
+                println!("  last verified: {}", last_verified);
+            }
             println!("  tmp: {}", tmp_root.join(name).exists());
         } else {
             println!(
@@ -1066,10 +1239,13 @@ pub async fn remove(name: String) -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn info(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let (_, config, _, lockfile) = config_and_lockfile()?;
+    let tmp_root = tmp_root()?;
+    let store = crate::installer::ContentStore::default();
     let skill = config
         .skills
         .get(&name)
         .ok_or_else(|| format!("Skill '{}' not found", name))?;
+    let summary = skill_summary(&name, skill, lockfile.as_ref(), &tmp_root, &store);
 
     println!("Skill: {}", name);
     println!("Source: {}", describe_skill_source(skill));
@@ -1081,6 +1257,18 @@ pub async fn info(name: String) -> Result<(), Box<dyn std::error::Error>> {
         "Lock: {}",
         describe_locked_skill(lockfile.as_ref().and_then(|lock| lock.get_skill(&name)))
     );
+    if let Some(version) = summary.skill_version {
+        println!("Skill Version: {}", version);
+    }
+    if let Some(maturity) = summary.maturity {
+        println!("Maturity: {}", maturity);
+    }
+    if let Some(last_verified) = summary.last_verified {
+        println!("Last Verified: {}", last_verified);
+    }
+    if let Some(description) = summary.description {
+        println!("Description: {}", description);
+    }
 
     Ok(())
 }
@@ -1187,6 +1375,30 @@ pub async fn doctor() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for (name, skill) in &config.skills {
+        let manifest = load_manifest_for_config_skill(name, skill, &tmp_path);
+        match manifest {
+            Some(manifest) => {
+                print_diagnostic(
+                    DiagnosticLevel::Pass,
+                    format!(
+                        "skill '{}' manifest v{} metadata present (version {}, maturity {})",
+                        name,
+                        manifest.manifest_version,
+                        manifest.skill.version,
+                        manifest.skill.maturity
+                    ),
+                );
+                pass_count += 1;
+            }
+            None => {
+                print_diagnostic(
+                    DiagnosticLevel::Warn,
+                    format!("skill '{}' missing SKILL.toml manifest; using legacy/fallback mode", name),
+                );
+                warn_count += 1;
+            }
+        }
+
         if let crate::config::SkillSource::Local { path } = &skill.source {
             if Path::new(path).exists() {
                 print_diagnostic(
@@ -1225,6 +1437,41 @@ pub async fn doctor() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+pub async fn doctor_summary() -> Result<String, Box<dyn std::error::Error>> {
+    let (config_path, config, lockfile_path, lockfile) = config_and_lockfile()?;
+    let tmp_path = tmp_root()?;
+    let mut pass_count = 0;
+    let mut warn_count = 0;
+    let mut fail_count = 0;
+    let mut lines = vec![
+        format!("Configuration: {}", config_path.display()),
+        format!("Version: {}", config.version),
+        format!("Skills configured: {}", config.skills.len()),
+        format!("Lockfile exists: {}", lockfile_path.exists()),
+    ];
+
+    if config.validate().is_ok() {
+        pass_count += 1;
+        lines.push("PASS config validation".to_string());
+    } else {
+        fail_count += 1;
+        lines.push("FAIL config validation".to_string());
+    }
+
+    for (name, skill) in &config.skills {
+        let summary = skill_summary(name, skill, lockfile.as_ref(), &tmp_path, &crate::installer::ContentStore::default());
+        if summary.outdated == "up-to-date" {
+            pass_count += 1;
+        } else {
+            warn_count += 1;
+        }
+        lines.push(format!("{} :: {} :: {}", name, summary.outdated, summary.lock_summary));
+    }
+
+    lines.push(format!("Summary: {} pass, {} warn, {} fail", pass_count, warn_count, fail_count));
+    Ok(lines.join("\n"))
 }
 
 pub async fn clean(all: bool) -> Result<(), Box<dyn std::error::Error>> {
