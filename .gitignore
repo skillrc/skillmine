@@ -24,3 +24,12 @@ target
 # Added by cargo
 
 /target
+
+# Local planning and editor artifacts
+.kiro/
+.sisyphus/
+
+# Local skillmine scratch files
+skills.toml
+test_output/
+test-manual/

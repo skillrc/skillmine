@@ -140,25 +140,32 @@ impl Serialize for ConfigSkill {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryEntry {
+    pub repo: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub version: String,
     #[serde(default)]
     pub settings: Settings,
     #[serde(default)]
+    pub registry: BTreeMap<String, RegistryEntry>,
+    #[serde(default)]
     pub skills: BTreeMap<String, ConfigSkill>,
 }
 
 impl Config {
+    #[allow(dead_code)]
     pub fn load(path: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
-        Ok(config)
+        crate::config::io::load_config(path)
     }
 
+    #[allow(dead_code)]
     pub fn save(&self, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-        let content = toml::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
+        crate::config::io::save_config(self, path)
     }
 
     pub fn add_skill(&mut self, name: impl Into<String>, skill: ConfigSkill) {
@@ -220,20 +227,9 @@ impl Config {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn find_config() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let local_path = PathBuf::from("skills.toml");
-        if local_path.exists() {
-            return Ok(local_path);
-        }
-
-        if let Some(config_dir) = dirs::config_dir() {
-            let global_path = config_dir.join("skillmine").join("skills.toml");
-            if global_path.exists() {
-                return Ok(global_path);
-            }
-        }
-
-        Err("No configuration file found. Run 'skillmine init' first.".into())
+        crate::config::io::find_config()
     }
 }
 
@@ -242,6 +238,7 @@ impl Default for Config {
         Self {
             version: "1.0".to_string(),
             settings: Settings::default(),
+            registry: BTreeMap::new(),
             skills: BTreeMap::new(),
         }
     }
@@ -293,6 +290,25 @@ my-skill = { path = "~/dev/my-skill" }
 
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(config.skills.contains_key("my-skill"));
+    }
+
+    #[test]
+    fn test_parse_registry_entry() {
+        let toml_str = r#"
+version = "1.0"
+
+[registry.python-testing]
+repo = "anthropic/skills"
+path = "python-testing"
+
+[skills]
+python-testing = "^1.0"
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let entry = config.registry.get("python-testing").unwrap();
+        assert_eq!(entry.repo, "anthropic/skills");
+        assert_eq!(entry.path.as_deref(), Some("python-testing"));
     }
 
     #[test]

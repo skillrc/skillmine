@@ -1,8 +1,0 @@
-version = "1.0"
-
-[settings]
-concurrency = 5
-timeout = 300
-auto_sync = false
-
-[skills]

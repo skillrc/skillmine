@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -11,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Terminal;
 
-use crate::cli::{add, doctor_summary, install_selected, load_skill_summaries, remove, sync, update, SkillSummary};
+use crate::cli::{api, SkillSummary};
 
 struct App {
     skills: Vec<SkillSummary>,
@@ -37,6 +39,41 @@ enum PendingAction {
     Sync,
     Remove,
     Doctor,
+}
+
+pub(crate) trait ActionExecutor {
+    fn add_skill(&self, repo: String) -> Result<(), Box<dyn std::error::Error>>;
+    fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>>;
+    fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>>;
+    fn sync_skills(&self, target: String) -> Result<(), Box<dyn std::error::Error>>;
+    fn remove_skill(&self, name: String) -> Result<(), Box<dyn std::error::Error>>;
+    fn doctor_summary_text(&self) -> Result<String, Box<dyn std::error::Error>>;
+}
+
+impl ActionExecutor for api::TuiActionExecutor {
+    fn add_skill(&self, repo: String) -> Result<(), Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::add_skill(self, repo)
+    }
+
+    fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::install_skill(self, name)
+    }
+
+    fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::update_skill(self, name)
+    }
+
+    fn sync_skills(&self, target: String) -> Result<(), Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::sync_skills(self, target)
+    }
+
+    fn remove_skill(&self, name: String) -> Result<(), Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::remove_skill(self, name)
+    }
+
+    fn doctor_summary_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::doctor_summary_text(self)
+    }
 }
 
 impl App {
@@ -76,7 +113,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
-        match load_skill_summaries() {
+        match api::load_skill_summaries() {
             Ok(skills) => {
                 self.skills = skills;
                 self.normalize_selection();
@@ -100,11 +137,14 @@ impl App {
             .filter(|(_, skill)| {
                 skill.name.to_lowercase().contains(&needle)
                     || skill.outdated.to_lowercase().contains(&needle)
-                    || skill.statuses.iter().any(|status| status.to_lowercase().contains(&needle))
+                    || skill
+                        .statuses
+                        .iter()
+                        .any(|status: &String| status.to_lowercase().contains(&needle))
                     || skill
                         .description
                         .as_ref()
-                        .map(|desc| desc.to_lowercase().contains(&needle))
+                        .map(|desc: &String| desc.to_lowercase().contains(&needle))
                         .unwrap_or(false)
             })
             .map(|(index, _)| index)
@@ -128,7 +168,8 @@ impl App {
     }
 
     fn selected_filtered_name(&self) -> Option<String> {
-        self.selected_filtered_skill().map(|skill| skill.name.clone())
+        self.selected_filtered_skill()
+            .map(|skill| skill.name.clone())
     }
 
     fn command_items(&self) -> Vec<&'static str> {
@@ -156,8 +197,8 @@ impl App {
     }
 }
 
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let skills = load_skill_summaries()?;
+pub(crate) fn run(action_executor: &impl ActionExecutor) -> Result<(), Box<dyn std::error::Error>> {
+    let skills = api::load_skill_summaries()?;
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -165,7 +206,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
     let mut app = App::new(skills);
 
-    let result = run_loop(&mut terminal, &mut app);
+    let result = run_loop(&mut terminal, &mut app, action_executor);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -177,6 +218,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
+    action_executor: &impl ActionExecutor,
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         terminal.draw(|frame| {
@@ -351,8 +393,7 @@ fn run_loop(
                             if repo.is_empty() {
                                 app.status = "repo reference cannot be empty".to_string();
                             } else {
-                                let runtime = tokio::runtime::Runtime::new()?;
-                                runtime.block_on(add(repo.clone(), None, None))?;
+                                action_executor.add_skill(repo.clone())?;
                                 app.add_mode = false;
                                 app.add_input.clear();
                                 app.status = format!("added {}", repo);
@@ -373,7 +414,9 @@ fn run_loop(
 
                 if app.pending_action_result.is_some() {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => app.pending_action_result = None,
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                            app.pending_action_result = None
+                        }
                         _ => {}
                     }
                     continue;
@@ -409,7 +452,9 @@ fn run_loop(
 
                 if app.doctor_output.is_some() {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => app.doctor_output = None,
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                            app.doctor_output = None
+                        }
                         _ => {}
                     }
                     continue;
@@ -426,7 +471,7 @@ fn run_loop(
                 if let Some(action) = app.confirm_action {
                     match key.code {
                         KeyCode::Char('y') => {
-                            execute_action(app, action)?;
+                            execute_action(app, action, action_executor)?;
                             app.confirm_action = None;
                         }
                         KeyCode::Char('n') | KeyCode::Esc => {
@@ -530,44 +575,48 @@ fn run_command(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn execute_action(app: &mut App, action: PendingAction) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_action(
+    app: &mut App,
+    action: PendingAction,
+    action_executor: &impl ActionExecutor,
+) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         PendingAction::Install => {
             if let Some(name) = app.selected_filtered_name() {
-                let runtime = tokio::runtime::Runtime::new()?;
-                runtime.block_on(install_selected(Some(name.clone()), false, false))?;
+                action_executor.install_skill(Some(name.clone()))?;
                 app.status = format!("installed {}", name);
-                app.pending_action_result = Some(format!("Installed {} and refreshed cached state.", name));
+                app.pending_action_result =
+                    Some(format!("Installed {} and refreshed cached state.", name));
                 app.refresh();
             }
         }
         PendingAction::Update => {
             if let Some(name) = app.selected_filtered_name() {
-                let runtime = tokio::runtime::Runtime::new()?;
-                runtime.block_on(update(Some(name.clone())))?;
+                action_executor.update_skill(Some(name.clone()))?;
                 app.status = format!("updated {}", name);
                 app.pending_action_result = Some(format!("Updated {} and refreshed state.", name));
                 app.refresh();
             }
         }
         PendingAction::Sync => {
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(sync(app.sync_target.clone(), None))?;
+            action_executor.sync_skills(app.sync_target.clone())?;
             app.status = format!("synced skills to {} target", app.sync_target);
-            app.pending_action_result = Some(format!("Synced configured skills to the {} target.", app.sync_target));
+            app.pending_action_result = Some(format!(
+                "Synced configured skills to the {} target.",
+                app.sync_target
+            ));
             app.refresh();
         }
         PendingAction::Remove => {
             if let Some(name) = app.selected_filtered_name() {
-                let runtime = tokio::runtime::Runtime::new()?;
-                runtime.block_on(remove(name.clone()))?;
+                action_executor.remove_skill(name.clone())?;
                 app.status = format!("removed {}", name);
                 app.pending_action_result = Some(format!("Removed {} from configuration.", name));
                 app.refresh();
             }
         }
         PendingAction::Doctor => {
-            app.doctor_output = Some(tokio::runtime::Runtime::new()?.block_on(doctor_summary())?);
+            app.doctor_output = Some(action_executor.doctor_summary_text()?);
             app.status = "doctor summary ready".to_string();
         }
     }
@@ -612,4 +661,143 @@ fn centered_rect(percent_x: u16, percent_y: u16, rect: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeExecutor {
+        calls: RefCell<Vec<String>>,
+        doctor_output: String,
+    }
+
+    impl FakeExecutor {
+        fn with_doctor_output(output: &str) -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+                doctor_output: output.to_string(),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl ActionExecutor for FakeExecutor {
+        fn add_skill(&self, repo: String) -> Result<(), Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push(format!("add:{repo}"));
+            Ok(())
+        }
+
+        fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push(format!(
+                "install:{}",
+                name.unwrap_or_else(|| "all".to_string())
+            ));
+            Ok(())
+        }
+
+        fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push(format!(
+                "update:{}",
+                name.unwrap_or_else(|| "all".to_string())
+            ));
+            Ok(())
+        }
+
+        fn sync_skills(&self, target: String) -> Result<(), Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push(format!("sync:{target}"));
+            Ok(())
+        }
+
+        fn remove_skill(&self, name: String) -> Result<(), Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push(format!("remove:{name}"));
+            Ok(())
+        }
+
+        fn doctor_summary_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push("doctor".to_string());
+            Ok(self.doctor_output.clone())
+        }
+    }
+
+    fn sample_skill(name: &str) -> SkillSummary {
+        SkillSummary {
+            name: name.to_string(),
+            source: "local".to_string(),
+            statuses: vec!["configured".to_string()],
+            outdated: "up-to-date".to_string(),
+            lock_summary: "not-locked".to_string(),
+            manifest_version: None,
+            skill_version: None,
+            maturity: None,
+            last_verified: None,
+            description: Some("demo skill".to_string()),
+        }
+    }
+
+    #[test]
+    fn tui_doctor_action_does_not_nest_runtime() {
+        let mut app = App::new(vec![]);
+        let executor = FakeExecutor::with_doctor_output("PASS config validation");
+
+        let result = execute_action(&mut app, PendingAction::Doctor, &executor);
+
+        assert!(result.is_ok());
+        assert_eq!(app.doctor_output.as_deref(), Some("PASS config validation"));
+        assert_eq!(app.status, "doctor summary ready");
+        assert_eq!(executor.calls(), vec!["doctor"]);
+    }
+
+    #[test]
+    fn tui_action_install_runs_selected_skill() {
+        let mut app = App::new(vec![sample_skill("demo")]);
+        let executor = FakeExecutor::default();
+
+        let result = execute_action(&mut app, PendingAction::Install, &executor);
+
+        assert!(result.is_ok());
+        assert_eq!(app.status, "refreshed summaries");
+        assert_eq!(
+            app.pending_action_result.as_deref(),
+            Some("Installed demo and refreshed cached state.")
+        );
+        assert_eq!(executor.calls(), vec!["install:demo"]);
+    }
+
+    #[test]
+    fn tui_action_update_sync_and_remove_use_executor_boundary() {
+        let executor = FakeExecutor::default();
+
+        let mut update_app = App::new(vec![sample_skill("demo")]);
+        assert!(execute_action(&mut update_app, PendingAction::Update, &executor).is_ok());
+
+        let mut sync_app = App::new(vec![sample_skill("demo")]);
+        assert!(execute_action(&mut sync_app, PendingAction::Sync, &executor).is_ok());
+
+        let mut remove_app = App::new(vec![sample_skill("demo")]);
+        assert!(execute_action(&mut remove_app, PendingAction::Remove, &executor).is_ok());
+
+        assert_eq!(
+            executor.calls(),
+            vec!["update:demo", "sync:opencode", "remove:demo"]
+        );
+    }
+
+    #[test]
+    fn tui_action_remove_without_selection_is_nonfatal() {
+        let mut app = App::new(vec![]);
+        let executor = FakeExecutor::default();
+
+        let result = execute_action(&mut app, PendingAction::Remove, &executor);
+
+        assert!(result.is_ok());
+        assert!(executor.calls().is_empty());
+        assert!(app.pending_action_result.is_none());
+        assert!(app.doctor_output.is_none());
+    }
 }

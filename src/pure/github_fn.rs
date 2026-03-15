@@ -1,20 +1,21 @@
-use crate::types::{Result, SkillmineError};
-
-pub fn parse_github_ref(input: &str) -> Result<(String, Option<String>)> {
+pub fn parse_github_ref(
+    input: &str,
+) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
     let parts: Vec<&str> = input.split('/').collect();
 
     if parts.len() < 2 {
-        return Err(SkillmineError::validation(format!(
+        return Err(format!(
             "Invalid GitHub ref '{}'. Expected: owner/repo or owner/repo/path",
             input
-        )));
+        )
+        .into());
     }
 
     let owner = parts[0];
     let repo = parts[1];
 
     if owner.is_empty() || repo.is_empty() {
-        return Err(SkillmineError::validation("Owner and repo cannot be empty"));
+        return Err("Owner and repo cannot be empty".into());
     }
 
     let path = if parts.len() > 2 {
@@ -26,6 +27,7 @@ pub fn parse_github_ref(input: &str) -> Result<(String, Option<String>)> {
     Ok((format!("{}/{}", owner, repo), path))
 }
 
+#[allow(dead_code)]
 pub fn build_github_url(repo: &str) -> String {
     format!("https://github.com/{}", repo)
 }

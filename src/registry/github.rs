@@ -1,6 +1,7 @@
 use crate::config::SkillSource;
 use crate::error::Result;
 use crate::error::SkillmineError;
+use crate::registry::pure::{github_repo_url, reference_for_requested_ref};
 use git2::{build::RepoBuilder, FetchOptions, Oid, Repository};
 use std::path::Path;
 
@@ -43,15 +44,8 @@ impl GitClient {
                 let resolved = Self::resolve_local_head(repo_path)?;
                 let tree_hash = Self::get_path_tree_hash(repo_path, path)?;
 
-                let reference = if let Some(commit) = commit {
-                    commit.clone()
-                } else if let Some(tag) = tag {
-                    format!("tag:{}", tag)
-                } else if let Some(branch) = branch {
-                    format!("branch:{}", branch)
-                } else {
-                    resolved.reference
-                };
+                let reference =
+                    reference_for_requested_ref(branch, tag, commit).unwrap_or(resolved.reference);
 
                 Ok(ResolvedRef {
                     commit: resolved.commit,
@@ -82,33 +76,27 @@ impl GitClient {
                 commit,
                 ..
             } => {
-                let url = format!("https://github.com/{}", repo);
+                let url = github_repo_url(repo);
 
                 let mut fetch_opts = FetchOptions::new();
                 if shallow {
                     fetch_opts.depth(1);
                 }
 
-                let checkout_ref = if let Some(c) = commit {
-                    Some(c.clone())
-                } else if let Some(t) = tag {
-                    Some(format!("refs/tags/{}", t))
-                } else {
-                    branch.as_ref().map(|b| format!("origin/{}", b))
-                };
-
                 let mut builder = RepoBuilder::new();
                 builder.fetch_options(fetch_opts);
 
-                if let Some(ref_name) = checkout_ref {
-                    builder.branch(&ref_name.replace("origin/", ""));
+                if let Some(branch_name) = branch {
+                    builder.branch(branch_name);
                 }
 
                 let repo = builder
                     .clone(&url, dest)
                     .map_err(|e| SkillmineError::Git(format!("Failed to clone {}: {}", url, e)))?;
 
-                if let Some(commit_sha) = commit {
+                if let Some(tag_name) = tag {
+                    Self::checkout_tag(&repo, tag_name)?;
+                } else if let Some(commit_sha) = commit {
                     Self::checkout_commit(&repo, commit_sha)?;
                 }
 
@@ -140,6 +128,20 @@ impl GitClient {
         Ok(())
     }
 
+    fn checkout_tag(repo: &Repository, tag_name: &str) -> Result<()> {
+        let object = repo
+            .revparse_single(&format!("refs/tags/{}", tag_name))
+            .map_err(|e| SkillmineError::Git(format!("Tag not found: {}", e)))?;
+
+        repo.checkout_tree(&object, None)
+            .map_err(|e| SkillmineError::Git(format!("Checkout failed: {}", e)))?;
+
+        repo.set_head_detached(object.id())
+            .map_err(|e| SkillmineError::Git(format!("Failed to set HEAD: {}", e)))?;
+
+        Ok(())
+    }
+
     fn get_resolved_ref(
         repo: &Repository,
         branch: &Option<String>,
@@ -161,15 +163,8 @@ impl GitClient {
             .id()
             .to_string();
 
-        let reference = if let Some(c) = commit {
-            c.clone()
-        } else if let Some(t) = tag {
-            format!("tag:{}", t)
-        } else if let Some(b) = branch {
-            format!("branch:{}", b)
-        } else {
-            "default".to_string()
-        };
+        let reference = reference_for_requested_ref(branch, tag, commit)
+            .unwrap_or_else(|| "default".to_string());
 
         Ok(ResolvedRef {
             commit: commit_sha,
@@ -209,25 +204,6 @@ impl GitClient {
                 .to_string())
         }
     }
-
-    pub fn parse_github_ref(input: &str) -> Option<(String, Option<String>)> {
-        let parts: Vec<&str> = input.split('/').collect();
-
-        if parts.len() >= 2 {
-            let owner = parts[0];
-            let repo = parts[1];
-
-            let path = if parts.len() > 2 {
-                Some(parts[2..].join("/"))
-            } else {
-                None
-            };
-
-            Some((format!("{}/{}", owner, repo), path))
-        } else {
-            None
-        }
-    }
 }
 
 #[cfg(test)]
@@ -261,30 +237,6 @@ mod tests {
         drop(repo);
 
         temp_dir
-    }
-
-    #[test]
-    fn test_parse_github_ref_simple() {
-        let result = GitClient::parse_github_ref("anthropic/skills");
-        assert_eq!(result, Some(("anthropic/skills".to_string(), None)));
-    }
-
-    #[test]
-    fn test_parse_github_ref_with_path() {
-        let result = GitClient::parse_github_ref("anthropic/skills/git-release");
-        assert_eq!(
-            result,
-            Some((
-                "anthropic/skills".to_string(),
-                Some("git-release".to_string())
-            ))
-        );
-    }
-
-    #[test]
-    fn test_parse_github_ref_invalid() {
-        let result = GitClient::parse_github_ref("invalid");
-        assert_eq!(result, None);
     }
 
     #[test]
