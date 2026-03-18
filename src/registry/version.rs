@@ -20,16 +20,13 @@ pub fn resolve_version_source(
 
             let selected_tag = resolve_version_tag(&entry.repo, version)?;
 
-            Ok(ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: entry.repo.clone(),
-                    path: entry.path.clone(),
-                    branch: None,
-                    tag: Some(selected_tag),
-                    commit: None,
-                },
-                name: skill.name.clone().or_else(|| Some(name.to_string())),
-            })
+            Ok(ConfigSkill { source: SkillSource::GitHub {
+                repo: entry.repo.clone(),
+                path: entry.path.clone(),
+                branch: None,
+                tag: Some(selected_tag),
+                commit: None,
+            }, name: skill.name.clone().or_else(|| Some(name.to_string())), enabled: true, sync_enabled: true })
         }
         _ => Ok(skill.clone()),
     }
@@ -157,10 +154,7 @@ mod tests {
 
         let resolved = resolve_version_source(
             "python-testing",
-            &ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            &ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
             &config,
         )
         .unwrap();

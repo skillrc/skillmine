@@ -1,9 +1,10 @@
     use super::*;
-    use crate::cli::commands::{clean, doctor, info, outdated};
+    use crate::cli::commands::{clean, doctor, doctor_summary, info, outdated};
     use crate::cli::diagnostics::{DiagnosticLevel, DiagnosticSummary};
     use crate::cli::state::{classify_outdated, OutdatedState, SkillStatus};
     use crate::config::{Config, ConfigSkill, SkillSource};
     use crate::lockfile::LOCKFILE_NAME;
+    use chrono::Utc;
     use git2::{Repository, Signature};
     use tempfile::TempDir;
     use tokio::sync::{Mutex, OnceCell};
@@ -44,6 +45,46 @@
         }
     }
 
+    #[tokio::test]
+    async fn test_doctor_summary_reports_lifecycle_stage_for_healthy_skill() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let local_repo = init_local_git_repo();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill {
+                source: SkillSource::Local {
+                    path: local_repo.path().to_string_lossy().to_string(),
+                },
+                name: None,
+                enabled: true,
+                sync_enabled: true,
+            },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path());
+        }
+        assert!(install(false, false).await.is_ok());
+        assert!(freeze().await.is_ok());
+
+        let summary = doctor_summary().await.unwrap();
+
+        unsafe {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(summary.contains("demo :: lifecycle: configured+installed+locked"));
+        assert!(summary.contains("demo :: outdated: up-to-date"));
+    }
+
     fn init_local_git_repo() -> TempDir {
         let temp_dir = TempDir::new().unwrap();
         Repository::init(temp_dir.path()).unwrap();
@@ -54,6 +95,60 @@
     async fn cwd_lock() -> &'static Mutex<()> {
         static LOCK: OnceCell<Mutex<()>> = OnceCell::const_new();
         LOCK.get_or_init(|| async { Mutex::new(()) }).await
+    }
+
+    #[tokio::test]
+    async fn test_create_generates_local_skill_and_guides_next_steps() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let result = create("demo-skill".to_string(), None).await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        let skill_dir = temp_dir.path().join("demo-skill");
+
+        assert!(skill_dir.exists());
+        assert!(skill_dir.join("SKILL.toml").exists());
+        assert!(skill_dir.join("SKILL.md").exists());
+        assert!(skill_dir.join("README.md").exists());
+
+        let manifest = crate::manifest::load_manifest(&skill_dir, &None)
+            .unwrap()
+            .expect("manifest should load");
+        assert_eq!(manifest.skill.name, "demo-skill");
+        assert_eq!(manifest.skill.version, "0.1.0");
+
+        assert!(output.contains("Created skill package at"));
+        assert!(output.contains("skillmine add"));
+        assert!(output.contains("skillmine install"));
+        assert!(output.contains("skillmine sync --target=opencode"));
+    }
+
+    #[tokio::test]
+    async fn test_create_uses_output_directory_when_provided() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let output_root = temp_dir.path().join("generated-skills");
+        let result = create(
+            "demo-skill".to_string(),
+            Some(output_root.to_string_lossy().to_string()),
+        )
+        .await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let skill_dir = output_root.join("demo-skill");
+        assert!(skill_dir.join("SKILL.toml").exists());
+        assert!(result.unwrap().contains(&skill_dir.to_string_lossy().to_string()));
     }
 
     #[tokio::test]
@@ -88,6 +183,35 @@
 
         assert!(result.is_ok());
         assert!(updated.skills.contains_key("git-release"));
+    }
+
+    #[tokio::test]
+    async fn test_add_local_path_updates_local_config() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let initial = Config::default();
+        crate::config::io::save_config(&initial, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let local_skill_dir = temp_dir.path().join("opencode-skill-local-demo");
+        std::fs::create_dir_all(&local_skill_dir).unwrap();
+        std::fs::write(local_skill_dir.join("README.md"), "demo").unwrap();
+
+        let result = add(local_skill_dir.to_string_lossy().to_string(), None, None).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let skill = updated.skills.get("opencode-skill-local-demo").unwrap();
+        match &skill.source {
+            SkillSource::Local { path } => {
+                assert_eq!(path, &local_skill_dir.to_string_lossy().to_string());
+            }
+            other => panic!("expected local source, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -140,12 +264,9 @@
         let mut config = Config::default();
         config.add_skill(
             "local-skill",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: source_dir.to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir.to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -160,6 +281,7 @@
 
         assert!(result.is_ok());
         assert!(target_dir.join("local-skill").exists());
+        assert!(result.unwrap().contains("✓ Synced 'local-skill' ->"));
     }
 
     #[tokio::test]
@@ -172,10 +294,7 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -189,7 +308,76 @@
     }
 
     #[tokio::test]
-    async fn test_freeze_and_thaw_flow() {
+    async fn test_disable_marks_skill_as_disabled_in_config() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = disable("demo".to_string()).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(!updated.skills.get("demo").unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn test_enable_marks_skill_as_enabled_in_config() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: false, sync_enabled: true },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = enable("demo".to_string()).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(updated.skills.get("demo").unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn test_unsync_marks_skill_as_runtime_unsynced_in_config() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = unsync("demo".to_string()).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(!updated.skills.get("demo").unwrap().sync_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_resync_marks_skill_as_runtime_synced_in_config() {
         let _guard = cwd_lock().await.lock().await;
         let temp_dir = TempDir::new().unwrap();
         let original_dir = std::env::current_dir().unwrap();
@@ -201,7 +389,32 @@
             ConfigSkill {
                 source: SkillSource::Version("^1.0".to_string()),
                 name: None,
+                enabled: true,
+                sync_enabled: false,
             },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = resync("demo".to_string()).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(updated.skills.get("demo").unwrap().sync_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_freeze_and_thaw_flow() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -246,16 +459,13 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: None,
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -307,10 +517,7 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -335,12 +542,9 @@
         let mut config = Config::default();
         config.add_skill(
             "local-skill",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: source_dir.to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir.to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -363,10 +567,7 @@
         let mut config = Config::default();
         config.add_skill(
             "configured-only",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -412,12 +613,9 @@
         let mut config = Config::default();
         config.add_skill(
             "local-git",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: local_repo.path().to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: local_repo.path().to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -465,12 +663,9 @@
         let mut config = Config::default();
         config.add_skill(
             "local-git",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: local_repo.path().to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: local_repo.path().to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -527,16 +722,13 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: None,
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -593,16 +785,13 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: None,
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -665,16 +854,13 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: None,
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -737,16 +923,13 @@
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: None,
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -854,10 +1037,7 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -900,12 +1080,9 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "local-git",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: local_repo.path().to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: local_repo.path().to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -925,10 +1102,7 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -957,16 +1131,13 @@ auto_sync = false
 
     #[tokio::test]
     async fn test_classify_outdated_marks_pinned_github_skill() {
-        let skill = ConfigSkill {
-            source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: None,
-                branch: None,
-                tag: None,
-                commit: Some("abc123".to_string()),
-            },
-            name: None,
-        };
+        let skill = ConfigSkill { source: SkillSource::GitHub {
+            repo: "owner/repo".to_string(),
+            path: None,
+            branch: None,
+            tag: None,
+            commit: Some("abc123".to_string()),
+        }, name: None, enabled: true, sync_enabled: true };
 
         let state = classify_outdated(
             &skill,
@@ -992,16 +1163,13 @@ auto_sync = false
 
     #[tokio::test]
     async fn test_classify_outdated_marks_tmp_missing_for_github_without_clone() {
-        let skill = ConfigSkill {
-            source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: None,
-                branch: Some("main".to_string()),
-                tag: None,
-                commit: None,
-            },
-            name: None,
-        };
+        let skill = ConfigSkill { source: SkillSource::GitHub {
+            repo: "owner/repo".to_string(),
+            path: None,
+            branch: Some("main".to_string()),
+            tag: None,
+            commit: None,
+        }, name: None, enabled: true, sync_enabled: true };
 
         let state = classify_outdated(
             &skill,
@@ -1027,19 +1195,16 @@ auto_sync = false
 
     #[test]
     fn test_describe_skill_source_for_github_commit() {
-        let skill = ConfigSkill {
-            source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: Some("sub/skill".to_string()),
-                branch: None,
-                tag: None,
-                commit: Some("1234567890abcdef".to_string()),
-            },
-            name: None,
-        };
+        let skill = ConfigSkill { source: SkillSource::GitHub {
+            repo: "owner/repo".to_string(),
+            path: Some("sub/skill".to_string()),
+            branch: None,
+            tag: None,
+            commit: Some("1234567890abcdef".to_string()),
+        }, name: None, enabled: true, sync_enabled: true };
 
         let rendered = describe_skill_source(&skill);
-        assert!(rendered.contains("github:owner/repo"));
+        assert!(rendered.contains("GitHub: owner/repo"));
         assert!(rendered.contains("path=sub/skill"));
         assert!(rendered.contains("commit=12345678"));
     }
@@ -1075,16 +1240,13 @@ auto_sync = false
 
     #[test]
     fn test_cli_pure_module_exports_description_helpers() {
-        let skill = ConfigSkill {
-            source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: Some("nested/skill".to_string()),
-                branch: Some("main".to_string()),
-                tag: None,
-                commit: None,
-            },
-            name: Some("skill".to_string()),
-        };
+        let skill = ConfigSkill { source: SkillSource::GitHub {
+            repo: "owner/repo".to_string(),
+            path: Some("nested/skill".to_string()),
+            branch: Some("main".to_string()),
+            tag: None,
+            commit: None,
+        }, name: Some("skill".to_string()), enabled: true, sync_enabled: true };
 
         let locked = LockedSkill {
             name: "skill".to_string(),
@@ -1105,7 +1267,7 @@ auto_sync = false
         let source = crate::cli::pure::describe_skill_source(&skill);
         let summary = crate::cli::pure::describe_locked_skill(Some(&locked));
 
-        assert!(source.contains("github:owner/repo"));
+        assert!(source.contains("GitHub: owner/repo"));
         assert!(source.contains("path=nested/skill"));
         assert!(summary.contains("locked=12345678"));
     }
@@ -1140,32 +1302,23 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "local-git",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: local_repo.path().to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: local_repo.path().to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         config.add_skill(
             "github-skill",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: None,
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         config.add_skill(
             "version-skill",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1200,16 +1353,13 @@ auto_sync = false
         commit_file(&github_tmp, "skill.md", "gh-v1", "initial");
         let resolved = crate::registry::GitClient::resolve_local_head(&github_tmp).unwrap();
 
-        let skill = ConfigSkill {
-            source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: None,
-                branch: Some("main".to_string()),
-                tag: None,
-                commit: None,
-            },
-            name: None,
-        };
+        let skill = ConfigSkill { source: SkillSource::GitHub {
+            repo: "owner/repo".to_string(),
+            path: None,
+            branch: Some("main".to_string()),
+            tag: None,
+            commit: None,
+        }, name: None, enabled: true, sync_enabled: true };
 
         unsafe {
             std::env::set_var("XDG_DATA_HOME", temp_dir.path());
@@ -1255,12 +1405,9 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "local-git",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: local_repo.path().to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: local_repo.path().to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1299,10 +1446,7 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1357,16 +1501,13 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "git-release",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "anthropic/skills".to_string(),
-                    path: Some("git-release".to_string()),
-                    branch: None,
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "anthropic/skills".to_string(),
+                path: Some("git-release".to_string()),
+                branch: None,
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1393,16 +1534,13 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "git-release",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "anthropic/skills".to_string(),
-                    path: Some("git-release".to_string()),
-                    branch: None,
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "anthropic/skills".to_string(),
+                path: Some("git-release".to_string()),
+                branch: None,
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1440,16 +1578,13 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "git-release",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "anthropic/skills".to_string(),
-                    path: Some("git-release".to_string()),
-                    branch: None,
-                    tag: None,
-                    commit: Some("1234567890abcdef1234567890abcdef12345678".to_string()),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "anthropic/skills".to_string(),
+                path: Some("git-release".to_string()),
+                branch: None,
+                tag: None,
+                commit: Some("1234567890abcdef1234567890abcdef12345678".to_string()),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1486,16 +1621,13 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "git-release",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "anthropic/skills".to_string(),
-                    path: Some("git-release".to_string()),
-                    branch: None,
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "anthropic/skills".to_string(),
+                path: Some("git-release".to_string()),
+                branch: None,
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1531,21 +1663,15 @@ auto_sync = false
         config.settings.concurrency = 2;
         config.add_skill(
             "local-skill-a",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: source_dir_a.to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir_a.to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         config.add_skill(
             "local-skill-b",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: source_dir_b.to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir_b.to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1574,28 +1700,19 @@ auto_sync = false
         config.settings.concurrency = 3;
         config.add_skill(
             "local-skill",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: source_dir.to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir.to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         config.add_skill(
             "missing-local",
-            ConfigSkill {
-                source: SkillSource::Local {
-                    path: temp_dir.path().join("missing").to_string_lossy().to_string(),
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Local {
+                path: temp_dir.path().join("missing").to_string_lossy().to_string(),
+            }, name: None, enabled: true, sync_enabled: true },
         );
         config.add_skill(
             "version-skill",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1633,10 +1750,7 @@ auto_sync = false
         );
         config.add_skill(
             "python-testing",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1667,10 +1781,7 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "python-testing",
-            ConfigSkill {
-                source: SkillSource::Version("^1.0".to_string()),
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1695,16 +1806,13 @@ auto_sync = false
         let mut config = Config::default();
         config.add_skill(
             "demo",
-            ConfigSkill {
-                source: SkillSource::GitHub {
-                    repo: "owner/repo".to_string(),
-                    path: Some("subdir".to_string()),
-                    branch: Some("main".to_string()),
-                    tag: None,
-                    commit: None,
-                },
-                name: None,
-            },
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: Some("subdir".to_string()),
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: true, sync_enabled: true },
         );
         crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
 
@@ -1712,4 +1820,292 @@ auto_sync = false
 
         std::env::set_current_dir(original_dir).unwrap();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_disabled_skill_flag() {
+        let toml_str = r#"
+version = "1.0"
+
+[skills]
+demo = { repo = "owner/repo", enabled = false }
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let skill = config.skills.get("demo").unwrap();
+
+        assert!(!skill.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_install_skips_disabled_skill() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let source_dir = temp_dir.path().join("local-skill");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("README.md"), "skill").unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "local-skill",
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir.to_string_lossy().to_string(),
+            }, name: None, enabled: false, sync_enabled: true, },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = install(false, false).await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let lockfile_path = temp_dir.path().join(LOCKFILE_NAME);
+        if lockfile_path.exists() {
+            let lockfile = Lockfile::load(&lockfile_path).unwrap();
+            assert!(lockfile.get_skill("local-skill").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sync_skips_disabled_skill() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let source_dir = temp_dir.path().join("local-skill");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("README.md"), "skill").unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "local-skill",
+            ConfigSkill { source: SkillSource::Local {
+                path: source_dir.to_string_lossy().to_string(),
+            }, name: None, enabled: false, sync_enabled: true, },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let target_dir = temp_dir.path().join("target-skills");
+        let result = sync(
+            "claude".to_string(),
+            Some(target_dir.to_string_lossy().to_string()),
+        )
+        .await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(!target_dir.join("local-skill").exists());
+        assert!(result.unwrap().contains("- Skipping 'local-skill' (disabled)"));
+    }
+
+    #[tokio::test]
+    async fn test_sync_skips_unsynced_skill() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let source_dir = temp_dir.path().join("local-skill");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("README.md"), "skill").unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "local-skill",
+            ConfigSkill {
+                source: SkillSource::Local {
+                    path: source_dir.to_string_lossy().to_string(),
+                },
+                name: None,
+                enabled: true,
+                sync_enabled: false,
+            },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let target_dir = temp_dir.path().join("target-skills");
+        let result = sync(
+            "claude".to_string(),
+            Some(target_dir.to_string_lossy().to_string()),
+        )
+        .await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(!target_dir.join("local-skill").exists());
+        assert!(result.unwrap().contains("- Skipping 'local-skill' (unsynced)"));
+    }
+
+    #[tokio::test]
+    async fn test_tui_sync_api_returns_report_text() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let source_dir = temp_dir.path().join("local-skill");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("README.md"), "skill").unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "local-skill",
+            ConfigSkill {
+                source: SkillSource::Local {
+                    path: source_dir.to_string_lossy().to_string(),
+                },
+                name: None,
+                enabled: true,
+                sync_enabled: true,
+            },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let target_dir = temp_dir.path().join("tui-target-skills");
+        let report = sync(
+            "claude".to_string(),
+            Some(target_dir.to_string_lossy().to_string()),
+        )
+        .await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(report.is_ok());
+        assert!(report.unwrap().contains("✓ Synced 'local-skill' ->"));
+    }
+
+    #[tokio::test]
+    async fn test_install_still_processes_unsynced_skill() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let source_dir = temp_dir.path().join("local-skill");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("README.md"), "skill").unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "local-skill",
+            ConfigSkill {
+                source: SkillSource::Local {
+                    path: source_dir.to_string_lossy().to_string(),
+                },
+                name: None,
+                enabled: true,
+                sync_enabled: false,
+            },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = install(false, false).await;
+        let lockfile = Lockfile::load(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert!(lockfile.get_skill("local-skill").is_some());
+    }
+
+    #[test]
+    fn test_disabled_skill_status_includes_disabled() {
+        let skill = ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: false, sync_enabled: true, };
+
+        let statuses = crate::cli::state::skill_statuses(
+            "demo",
+            &skill,
+            None,
+            Path::new("."),
+            &crate::installer::ContentStore::default(),
+        );
+
+        assert_eq!(statuses, vec![SkillStatus::Configured, SkillStatus::Disabled]);
+    }
+
+    #[test]
+    fn test_unsynced_skill_status_includes_unsynced() {
+        let skill = ConfigSkill {
+            source: SkillSource::Version("^1.0".to_string()),
+            name: None,
+            enabled: true,
+            sync_enabled: false,
+        };
+
+        let statuses = crate::cli::state::skill_statuses(
+            "demo",
+            &skill,
+            None,
+            Path::new("."),
+            &crate::installer::ContentStore::default(),
+        );
+
+        assert_eq!(statuses, vec![SkillStatus::Configured, SkillStatus::Unsynced]);
+    }
+
+    #[tokio::test]
+    async fn test_doctor_summary_treats_disabled_skill_as_intentionally_inactive() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill { source: SkillSource::GitHub {
+                repo: "owner/repo".to_string(),
+                path: None,
+                branch: Some("main".to_string()),
+                tag: None,
+                commit: None,
+            }, name: None, enabled: false, sync_enabled: true, },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let summary = doctor_summary().await.unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(summary.contains("demo :: intentionally-inactive :: disabled"));
+        assert!(summary.contains("Summary: 1 pass, 1 inactive, 0 warn, 0 fail"));
+    }
+
+    #[tokio::test]
+    async fn test_doctor_summary_treats_unsynced_skill_as_runtime_inactive() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut config = Config::default();
+        config.add_skill(
+            "demo",
+            ConfigSkill {
+                source: SkillSource::GitHub {
+                    repo: "owner/repo".to_string(),
+                    path: None,
+                    branch: Some("main".to_string()),
+                    tag: None,
+                    commit: None,
+                },
+                name: None,
+                enabled: true,
+                sync_enabled: false,
+            },
+        );
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let summary = doctor_summary().await.unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(summary.contains("demo :: runtime-inactive :: unsynced"));
+        assert!(summary.contains("Summary: 1 pass, 1 inactive, 0 warn, 0 fail"));
     }

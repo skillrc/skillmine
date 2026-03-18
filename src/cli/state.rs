@@ -7,6 +7,8 @@ use crate::lockfile::{LockedSkill, Lockfile};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillStatus {
     Configured,
+    Disabled,
+    Unsynced,
     Installed,
     Cached,
     Locked,
@@ -46,6 +48,14 @@ pub fn skill_statuses(
     store: &ContentStore,
 ) -> Vec<SkillStatus> {
     let mut statuses = vec![SkillStatus::Configured];
+    if !skill.enabled {
+        statuses.push(SkillStatus::Disabled);
+        return statuses;
+    }
+    if !skill.sync_enabled {
+        statuses.push(SkillStatus::Unsynced);
+        return statuses;
+    }
     let locked_skill = lockfile.and_then(|lock| lock.get_skill(name));
 
     let installed_path = match &skill.source {
@@ -90,6 +100,8 @@ pub fn format_statuses(statuses: &[SkillStatus]) -> String {
         .iter()
         .map(|status| match status {
             SkillStatus::Configured => "configured",
+            SkillStatus::Disabled => "disabled",
+            SkillStatus::Unsynced => "unsynced",
             SkillStatus::Installed => "installed",
             SkillStatus::Cached => "cached",
             SkillStatus::Locked => "locked",

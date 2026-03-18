@@ -11,6 +11,7 @@ use super::state::{classify_outdated, format_statuses, skill_statuses};
 pub struct SkillSummary {
     pub name: String,
     pub source: String,
+    pub enabled: bool,
     pub statuses: Vec<String>,
     pub outdated: String,
     pub lock_summary: String,
@@ -69,6 +70,7 @@ pub fn skill_summary(
     SkillSummary {
         name: name.to_string(),
         source: describe_skill_source(skill),
+        enabled: skill.enabled,
         statuses: format_statuses(&statuses)
             .split(',')
             .map(ToString::to_string)

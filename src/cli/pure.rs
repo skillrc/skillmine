@@ -14,7 +14,7 @@ pub fn describe_skill_source(skill: &ConfigSkill) -> String {
             tag,
             commit,
         } => {
-            let mut parts = vec![format!("github:{}", repo)];
+            let mut parts = vec![format!("GitHub: {}", repo)];
             if let Some(path) = path {
                 parts.push(format!("path={}", path));
             }
@@ -29,8 +29,8 @@ pub fn describe_skill_source(skill: &ConfigSkill) -> String {
             }
             parts.join(" ")
         }
-        crate::config::SkillSource::Local { path } => format!("local:{}", path),
-        crate::config::SkillSource::Version(version) => format!("version:{}", version),
+        crate::config::SkillSource::Local { path } => format!("Local path: {}", path),
+        crate::config::SkillSource::Version(version) => format!("Version: {}", version),
     }
 }
 

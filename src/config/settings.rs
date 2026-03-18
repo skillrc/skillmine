@@ -84,16 +84,55 @@ impl Default for SkillSource {
 pub struct ConfigSkill {
     pub source: SkillSource,
     pub name: Option<String>,
+    pub enabled: bool,
+    pub sync_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum RawConfigSkill {
-    Detailed {
-        #[serde(flatten)]
-        source: SkillSource,
+    GitHub {
+        repo: String,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        branch: Option<String>,
+        #[serde(default)]
+        tag: Option<String>,
+        #[serde(default)]
+        commit: Option<String>,
         #[serde(default)]
         name: Option<String>,
+        #[serde(default = "default_true")]
+        enabled: bool,
+        #[serde(default = "default_true")]
+        sync_enabled: bool,
+    },
+    Local {
+        path: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default = "default_true")]
+        enabled: bool,
+        #[serde(default = "default_true")]
+        sync_enabled: bool,
+    },
+    VersionDetailed {
+        version: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default = "default_true")]
+        enabled: bool,
+        #[serde(default = "default_true")]
+        sync_enabled: bool,
     },
     Version(String),
 }
@@ -104,10 +143,54 @@ impl<'de> Deserialize<'de> for ConfigSkill {
         D: serde::Deserializer<'de>,
     {
         match RawConfigSkill::deserialize(deserializer)? {
-            RawConfigSkill::Detailed { source, name } => Ok(Self { source, name }),
+            RawConfigSkill::GitHub {
+                repo,
+                path,
+                branch,
+                tag,
+                commit,
+                name,
+                enabled,
+                sync_enabled,
+            } => Ok(Self {
+                source: SkillSource::GitHub {
+                    repo,
+                    path,
+                    branch,
+                    tag,
+                    commit,
+                },
+                name,
+                enabled,
+                sync_enabled,
+            }),
+            RawConfigSkill::Local {
+                path,
+                name,
+                enabled,
+                sync_enabled,
+            } => Ok(Self {
+                source: SkillSource::Local { path },
+                name,
+                enabled,
+                sync_enabled,
+            }),
+            RawConfigSkill::VersionDetailed {
+                version,
+                name,
+                enabled,
+                sync_enabled,
+            } => Ok(Self {
+                source: SkillSource::Version(version),
+                name,
+                enabled,
+                sync_enabled,
+            }),
             RawConfigSkill::Version(version) => Ok(Self {
                 source: SkillSource::Version(version),
                 name: None,
+                enabled: true,
+                sync_enabled: true,
             }),
         }
     }
@@ -119,21 +202,83 @@ impl Serialize for ConfigSkill {
         S: serde::Serializer,
     {
         match (&self.source, &self.name) {
-            (SkillSource::Version(version), None) => version.serialize(serializer),
+            (SkillSource::Version(version), None) if self.enabled && self.sync_enabled => {
+                version.serialize(serializer)
+            }
             _ => {
                 #[derive(Serialize)]
-                struct Detailed<'a> {
-                    #[serde(flatten)]
-                    source: &'a SkillSource,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    name: &'a Option<String>,
+                #[serde(untagged)]
+                enum Detailed<'a> {
+                    GitHub {
+                        repo: &'a str,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        path: &'a Option<String>,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        branch: &'a Option<String>,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        tag: &'a Option<String>,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        commit: &'a Option<String>,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        name: &'a Option<String>,
+                        #[serde(skip_serializing_if = "is_true")]
+                        enabled: &'a bool,
+                        #[serde(skip_serializing_if = "is_true")]
+                        sync_enabled: &'a bool,
+                    },
+                    Local {
+                        path: &'a str,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        name: &'a Option<String>,
+                        #[serde(skip_serializing_if = "is_true")]
+                        enabled: &'a bool,
+                        #[serde(skip_serializing_if = "is_true")]
+                        sync_enabled: &'a bool,
+                    },
+                    VersionDetailed {
+                        version: &'a str,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        name: &'a Option<String>,
+                        #[serde(skip_serializing_if = "is_true")]
+                        enabled: &'a bool,
+                        #[serde(skip_serializing_if = "is_true")]
+                        sync_enabled: &'a bool,
+                    },
                 }
 
-                Detailed {
-                    source: &self.source,
-                    name: &self.name,
+                match &self.source {
+                    SkillSource::GitHub {
+                        repo,
+                        path,
+                        branch,
+                        tag,
+                        commit,
+                    } => Detailed::GitHub {
+                        repo,
+                        path,
+                        branch,
+                        tag,
+                        commit,
+                        name: &self.name,
+                        enabled: &self.enabled,
+                        sync_enabled: &self.sync_enabled,
+                    }
+                    .serialize(serializer),
+                    SkillSource::Local { path } => Detailed::Local {
+                        path,
+                        name: &self.name,
+                        enabled: &self.enabled,
+                        sync_enabled: &self.sync_enabled,
+                    }
+                    .serialize(serializer),
+                    SkillSource::Version(version) => Detailed::VersionDetailed {
+                        version,
+                        name: &self.name,
+                        enabled: &self.enabled,
+                        sync_enabled: &self.sync_enabled,
+                    }
+                    .serialize(serializer),
                 }
-                .serialize(serializer)
             }
         }
     }
@@ -358,10 +503,62 @@ bad-skill = { repo = "user/repo", path = "../secret" }
             ConfigSkill {
                 source: SkillSource::Version("^1.0".to_string()),
                 name: None,
+                enabled: true,
+                sync_enabled: true,
             },
         );
 
         let toml = toml::to_string_pretty(&config).unwrap();
         assert!(toml.contains("python-testing = \"^1.0\""));
+    }
+
+    #[test]
+    fn test_disabled_version_skill_round_trips_as_detailed_entry() {
+        let mut config = Config::default();
+        config.add_skill(
+            "python-testing",
+            ConfigSkill {
+                source: SkillSource::Version("^1.0".to_string()),
+                name: None,
+                enabled: false,
+                sync_enabled: true,
+            },
+        );
+
+        let toml = toml::to_string_pretty(&config).unwrap();
+        assert!(toml.contains("[skills.python-testing]"));
+        assert!(toml.contains("version = \"^1.0\""));
+        assert!(toml.contains("enabled = false"));
+
+        let reparsed: Config = toml::from_str(&toml).unwrap();
+        let skill = reparsed.skills.get("python-testing").unwrap();
+        assert!(matches!(&skill.source, SkillSource::Version(version) if version == "^1.0"));
+        assert!(!skill.enabled);
+        assert!(skill.sync_enabled);
+    }
+
+    #[test]
+    fn test_unsynced_version_skill_round_trips_as_detailed_entry() {
+        let mut config = Config::default();
+        config.add_skill(
+            "python-testing",
+            ConfigSkill {
+                source: SkillSource::Version("^1.0".to_string()),
+                name: None,
+                enabled: true,
+                sync_enabled: false,
+            },
+        );
+
+        let toml = toml::to_string_pretty(&config).unwrap();
+        assert!(toml.contains("[skills.python-testing]"));
+        assert!(toml.contains("version = \"^1.0\""));
+        assert!(toml.contains("sync_enabled = false"));
+
+        let reparsed: Config = toml::from_str(&toml).unwrap();
+        let skill = reparsed.skills.get("python-testing").unwrap();
+        assert!(matches!(&skill.source, SkillSource::Version(version) if version == "^1.0"));
+        assert!(skill.enabled);
+        assert!(!skill.sync_enabled);
     }
 }

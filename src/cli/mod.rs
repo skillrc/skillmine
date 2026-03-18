@@ -5,10 +5,12 @@ use crate::registry::version::resolve_version_source;
 
 pub mod api;
 pub mod commands;
+pub mod create;
 pub mod diagnostics;
 pub mod pure;
 pub mod state;
 pub mod summary;
+pub use create::create;
 pub use summary::SkillSummary;
 use pure::{describe_locked_skill, describe_skill_source};
 use state::{classify_outdated, format_outdated_state, format_statuses, skill_statuses};
@@ -25,6 +27,28 @@ fn guard_add_skill_input(
     tag: Option<String>,
 ) -> Result<AddSkillInput, Box<dyn std::error::Error>> {
     use crate::config::{ConfigSkill, SkillSource};
+
+    let candidate_path = PathBuf::from(repo);
+    if candidate_path.exists() {
+        let normalized = candidate_path
+            .canonicalize()
+            .unwrap_or(candidate_path.clone());
+        let path_string = normalized.to_string_lossy().to_string();
+        let skill_name = SkillSource::Local {
+            path: path_string.clone(),
+        }
+        .skill_name(repo);
+
+        return Ok(AddSkillInput {
+            skill_name: skill_name.clone(),
+            skill: ConfigSkill {
+                source: SkillSource::Local { path: path_string },
+                name: Some(skill_name),
+                enabled: true,
+                sync_enabled: true,
+            },
+        });
+    }
 
     let (repo_name, path): (String, Option<String>) = crate::pure::parse_github_ref(repo)?;
 
@@ -43,6 +67,8 @@ fn guard_add_skill_input(
                 commit: None,
             },
             name: Some(skill_name),
+            enabled: true,
+            sync_enabled: true,
         },
     })
 }
@@ -88,6 +114,47 @@ fn effect_add_skill_to_config(
 fn emit_add_success(skill_name: &str) {
     println!("✓ Added '{}' to skills.toml", skill_name);
     println!("  Run 'skillmine install' to install it");
+}
+
+
+fn effect_set_skill_enabled(
+    config_path: &Path,
+    name: &str,
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = crate::config::io::load_config(&config_path.to_path_buf())?;
+    let skill = config
+        .skills
+        .get_mut(name)
+        .ok_or_else(|| format!("Skill '{}' not found", name))?;
+    skill.enabled = enabled;
+    crate::config::io::save_config(&config, &config_path.to_path_buf())?;
+    Ok(())
+}
+
+fn effect_set_skill_sync_enabled(
+    config_path: &Path,
+    name: &str,
+    sync_enabled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = crate::config::io::load_config(&config_path.to_path_buf())?;
+    let skill = config
+        .skills
+        .get_mut(name)
+        .ok_or_else(|| format!("Skill '{}' not found", name))?;
+    skill.sync_enabled = sync_enabled;
+    crate::config::io::save_config(&config, &config_path.to_path_buf())?;
+    Ok(())
+}
+
+fn emit_set_skill_enabled(name: &str, enabled: bool) {
+    let action = if enabled { "Enabled" } else { "Disabled" };
+    println!("✓ {} '{}' in skills.toml", action, name);
+}
+
+fn emit_set_skill_sync_enabled(name: &str, sync_enabled: bool) {
+    let action = if sync_enabled { "Resynced" } else { "Unsynced" };
+    println!("✓ {} '{}' for runtime targets", action, name);
 }
 
 type ConfigBundle = (
@@ -247,7 +314,11 @@ fn refresh_lockfile_from_current_state(
     let mut lockfile = Lockfile::new(config_path);
 
     for (name, skill) in &config.skills {
-    if let Some(existing) = previous_lockfile.and_then(|lock| lock.get_skill(name)) {
+        if !skill.enabled {
+            continue;
+        }
+
+        if let Some(existing) = previous_lockfile.and_then(|lock| lock.get_skill(name)) {
             if matches!(skill.source, crate::config::SkillSource::GitHub { .. }) {
                 lockfile.skills.push(existing.clone());
                 continue;
@@ -324,16 +395,59 @@ pub async fn init(local: bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+
 pub async fn add(
     repo: String,
     branch: Option<String>,
     tag: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    add_with_options(repo, branch, tag, true).await.map(|_| ())
+}
+
+pub async fn add_with_options(
+    repo: String,
+    branch: Option<String>,
+    tag: Option<String>,
+    emit_output: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
     let config_path = crate::config::io::find_config()?;
     let add_skill_input = guard_add_skill_input(&repo, branch, tag)?;
     let skill_name = effect_add_skill_to_config(&config_path, add_skill_input)?;
-    emit_add_success(&skill_name);
+    if emit_output {
+        emit_add_success(&skill_name);
+    }
 
+    Ok(format!(
+        "Added source '{}' to configuration. Next: install to prepare it locally.",
+        skill_name
+    ))
+}
+
+pub async fn enable(name: String) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    effect_set_skill_enabled(&config_path, &name, true)?;
+    emit_set_skill_enabled(&name, true);
+    Ok(())
+}
+
+pub async fn disable(name: String) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    effect_set_skill_enabled(&config_path, &name, false)?;
+    emit_set_skill_enabled(&name, false);
+    Ok(())
+}
+
+pub async fn unsync(name: String) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    effect_set_skill_sync_enabled(&config_path, &name, false)?;
+    emit_set_skill_sync_enabled(&name, false);
+    Ok(())
+}
+
+pub async fn resync(name: String) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    effect_set_skill_sync_enabled(&config_path, &name, true)?;
+    emit_set_skill_sync_enabled(&name, true);
     Ok(())
 }
 
@@ -350,7 +464,7 @@ pub async fn install(force: bool, verbose: bool) -> Result<(), Box<dyn std::erro
     };
 
     if config.skills.is_empty() {
-        println!("No skills configured. Run 'skillmine add <repo>' to add skills.");
+        println!("No skill sources configured. Run 'skillmine add <source>' to add one.");
         return Ok(());
     }
 
@@ -369,6 +483,7 @@ pub async fn install(force: bool, verbose: bool) -> Result<(), Box<dyn std::erro
         config
             .skills
             .iter()
+            .filter(|(_, skill)| skill.enabled)
             .map(|(name, skill)| (name.clone(), skill.clone()))
             .collect(),
         config.clone(),
@@ -434,6 +549,11 @@ pub async fn install_selected(name: Option<String>, force: bool, verbose: bool) 
         return Err(format!("Skill '{}' not found", selected).into());
     };
 
+    if !skill.enabled {
+        println!("Skipping '{}': disabled", selected);
+        return Ok(());
+    }
+
     let store = ContentStore::default();
     store.init()?;
 
@@ -471,7 +591,15 @@ pub async fn install_selected(name: Option<String>, force: bool, verbose: bool) 
     Ok(())
 }
 
-pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn sync(target: String, path: Option<String>) -> Result<String, Box<dyn std::error::Error>> {
+    sync_with_options(target, path, true).await
+}
+
+pub async fn sync_with_options(
+    target: String,
+    path: Option<String>,
+    emit_output: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
     use crate::installer::ContentStore;
     use crate::registry::GitClient;
     use std::os::unix::fs::symlink;
@@ -486,8 +614,10 @@ pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn st
     };
 
     if config.skills.is_empty() {
-        println!("No skills configured.");
-        return Ok(());
+        if emit_output {
+            println!("No skills configured.");
+        }
+        return Ok("No skills configured.".to_string());
     }
 
     let target_dir = if let Some(custom_path) = path {
@@ -513,8 +643,24 @@ pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn st
 
     let mut synced = 0;
     let mut errors = 0;
+    let mut report_lines = Vec::new();
 
     for (name, skill) in &config.skills {
+        if !skill.enabled {
+            if emit_output {
+                println!("- Skipping '{}' (disabled)", name);
+            }
+            report_lines.push(format!("- Skipping '{}' (disabled)", name));
+            continue;
+        }
+        if !skill.sync_enabled {
+            if emit_output {
+                println!("- Skipping '{}' (unsynced)", name);
+            }
+            report_lines.push(format!("- Skipping '{}' (unsynced)", name));
+            continue;
+        }
+
         let skill_target = target_dir.join(name);
 
         if skill_target.exists() {
@@ -535,10 +681,16 @@ pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn st
                     &tmp_dir,
                 ) {
                     if let Err(error) = symlink(&source, &skill_target) {
-                        eprintln!("Failed to symlink '{}': {}", name, error);
+                        if emit_output {
+                            eprintln!("Failed to symlink '{}': {}", name, error);
+                        }
+                        report_lines.push(format!("✗ Failed '{}' -> {}", name, error));
                         errors += 1;
                     } else {
-                        println!("✓ Synced '{}' -> {}", name, skill_target.display());
+                        if emit_output {
+                            println!("✓ Synced '{}' -> {}", name, skill_target.display());
+                        }
+                        report_lines.push(format!("✓ Synced '{}' -> {}", name, skill_target.display()));
                         synced += 1;
                     }
                 } else {
@@ -559,19 +711,31 @@ pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn st
 
                             if let Some(source) = source_path {
                                 if let Err(error) = symlink(&source, &skill_target) {
-                                    eprintln!("Failed to symlink '{}': {}", name, error);
+                                    if emit_output {
+                                        eprintln!("Failed to symlink '{}': {}", name, error);
+                                    }
+                                    report_lines.push(format!("✗ Failed '{}' -> {}", name, error));
                                     errors += 1;
                                 } else {
-                                    println!("✓ Synced '{}' -> {}", name, skill_target.display());
+                                    if emit_output {
+                                        println!("✓ Synced '{}' -> {}", name, skill_target.display());
+                                    }
+                                    report_lines.push(format!("✓ Synced '{}' -> {}", name, skill_target.display()));
                                     synced += 1;
                                 }
                             } else {
-                                eprintln!("Failed to get source for '{}'", name);
+                                if emit_output {
+                                    eprintln!("Failed to get source for '{}'", name);
+                                }
+                                report_lines.push(format!("✗ Failed to get source for '{}'", name));
                                 errors += 1;
                             }
                         }
                         Err(error) => {
-                            eprintln!("Failed to resolve '{}': {}", name, error);
+                            if emit_output {
+                                eprintln!("Failed to resolve '{}': {}", name, error);
+                            }
+                            report_lines.push(format!("✗ Failed to resolve '{}': {}", name, error));
                             errors += 1;
                         }
                     }
@@ -581,30 +745,51 @@ pub async fn sync(target: String, path: Option<String>) -> Result<(), Box<dyn st
                 let source = std::path::PathBuf::from(local_path);
                 if source.exists() {
                     if let Err(error) = symlink(&source, &skill_target) {
-                        eprintln!("Failed to symlink '{}': {}", name, error);
+                        if emit_output {
+                            eprintln!("Failed to symlink '{}': {}", name, error);
+                        }
+                        report_lines.push(format!("✗ Failed '{}' -> {}", name, error));
                         errors += 1;
                     } else {
-                        println!("✓ Synced '{}' -> {}", name, skill_target.display());
+                        if emit_output {
+                            println!("✓ Synced '{}' -> {}", name, skill_target.display());
+                        }
+                        report_lines.push(format!("✓ Synced '{}' -> {}", name, skill_target.display()));
                         synced += 1;
                     }
                 } else {
-                    eprintln!("Local path for '{}' does not exist: {}", name, source.display());
+                    if emit_output {
+                        eprintln!("Local path for '{}' does not exist: {}", name, source.display());
+                    }
+                    report_lines.push(format!("✗ Local path missing for '{}': {}", name, source.display()));
                     errors += 1;
                 }
             }
             _ => {
-                eprintln!("Skipping '{}': unsupported source type", name);
+                if emit_output {
+                    eprintln!("Skipping '{}': unsupported source type", name);
+                }
+                report_lines.push(format!("- Skipping '{}' (unsupported source type)", name));
             }
         }
     }
 
-    println!("\nSync complete:");
-    println!("  {} synced to {}", synced, target_dir.display());
-    if errors > 0 {
-        println!("  {} errors", errors);
+    if emit_output {
+        println!("\nSync complete:");
+        println!("  {} synced to {}", synced, target_dir.display());
+        if errors > 0 {
+            println!("  {} errors", errors);
+        }
     }
 
-    Ok(())
+    report_lines.push(String::new());
+    report_lines.push("Sync complete:".to_string());
+    report_lines.push(format!("  {} synced to {}", synced, target_dir.display()));
+    if errors > 0 {
+        report_lines.push(format!("  {} errors", errors));
+    }
+
+    Ok(report_lines.join("\n"))
 }
 
 pub async fn freeze() -> Result<(), Box<dyn std::error::Error>> {
@@ -613,6 +798,10 @@ pub async fn freeze() -> Result<(), Box<dyn std::error::Error>> {
     let mut lockfile = Lockfile::new(&config_path);
 
     for (name, skill) in &config.skills {
+        if !skill.enabled {
+            continue;
+        }
+
         lockfile
             .skills
             .push(build_locked_skill(name, skill, &config, &tmp_root)?);

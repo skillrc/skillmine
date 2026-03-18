@@ -28,6 +28,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Create {
+        name: String,
+        #[arg(short = 'o', long)]
+        output_dir: Option<String>,
+    },
     Init {
         #[arg(short, long)]
         local: bool,
@@ -38,6 +43,18 @@ enum Commands {
         branch: Option<String>,
         #[arg(short, long)]
         tag: Option<String>,
+    },
+    Enable {
+        name: String,
+    },
+    Disable {
+        name: String,
+    },
+    Unsync {
+        name: String,
+    },
+    Resync {
+        name: String,
     },
     Install {
         #[arg(short, long)]
@@ -101,17 +118,33 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
+        Some(Commands::Create { name, output_dir }) => {
+            let output = cli::create(name, output_dir).await?;
+            println!("{}", output);
+        }
         Some(Commands::Init { local }) => cli::init(local).await?,
         Some(Commands::Add { repo, branch, tag }) => cli::add(repo, branch, tag).await?,
+        Some(Commands::Enable { name }) => cli::enable(name).await?,
+        Some(Commands::Disable { name }) => cli::disable(name).await?,
+        Some(Commands::Unsync { name }) => cli::unsync(name).await?,
+        Some(Commands::Resync { name }) => cli::resync(name).await?,
         Some(Commands::Install { force, verbose }) => cli::install(force, verbose).await?,
-        Some(Commands::Sync { target, path }) => cli::sync(target, path).await?,
+        Some(Commands::Sync { target, path }) => {
+            let _ = cli::sync(target, path).await?;
+        }
         Some(Commands::Freeze) => cli::freeze().await?,
         Some(Commands::Thaw) => cli::thaw().await?,
         Some(Commands::List { detailed }) => cli::list(detailed).await?,
         Some(Commands::Update { skill }) => cli::update(skill).await?,
         Some(Commands::Remove { name }) => cli::remove(name).await?,
-        Some(Commands::Info { name }) => cli::api::info_skill(name).await?,
-        Some(Commands::Outdated) => cli::api::outdated_skills().await?,
+        Some(Commands::Info { name }) => {
+            let output = cli::api::info_skill(name).await?;
+            println!("{}", output);
+        }
+        Some(Commands::Outdated) => {
+            let output = cli::api::outdated_skills().await?;
+            println!("{}", output);
+        }
         Some(Commands::Doctor) => cli::api::doctor_skills().await?,
         Some(Commands::Tui) => unreachable!("TUI handled in synchronous entrypoint"),
         Some(Commands::Clean { all }) => cli::api::clean_generated(all).await?,

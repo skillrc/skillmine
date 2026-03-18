@@ -8,6 +8,10 @@ use super::pure::{describe_locked_skill, describe_skill_source};
 use super::state::{classify_outdated, format_outdated_state};
 use super::summary::{load_manifest_for_config_skill, skill_summary};
 
+fn lifecycle_stage(summary: &crate::cli::SkillSummary) -> String {
+    summary.statuses.join("+")
+}
+
 pub async fn info(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let (_, config, _, lockfile) = super::config_and_lockfile()?;
     let tmp_root = super::tmp_root()?;
@@ -20,6 +24,7 @@ pub async fn info(name: String) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Skill: {}", name);
     println!("Source: {}", describe_skill_source(skill));
+    println!("Enabled: {}", skill.enabled);
     println!(
         "Outdated: {}",
         format_outdated_state(classify_outdated(
@@ -58,13 +63,22 @@ pub async fn outdated() -> Result<(), Box<dyn std::error::Error>> {
     match lockfile {
         Some(lockfile) => {
             for (name, skill) in &config.skills {
+                if !skill.enabled {
+                    println!("{}: disabled", name);
+                    continue;
+                }
                 let state = classify_outdated(skill, lockfile.get_skill(name));
                 println!("{}: {}", name, format_outdated_state(state));
             }
         }
         None => {
             for name in config.skills.keys() {
-                println!("{}: missing-from-lock", name);
+                let skill = config.skills.get(name).unwrap();
+                if !skill.enabled {
+                    println!("{}: disabled", name);
+                } else {
+                    println!("{}: missing-from-lock", name);
+                }
             }
         }
     }
@@ -77,6 +91,7 @@ pub async fn doctor() -> Result<(), Box<dyn std::error::Error>> {
     let store_path = ContentStore::default_path()?;
     let tmp_path = super::tmp_root()?;
     let mut pass_count = 0;
+    let mut inactive_count = 0;
     let mut warn_count = 0;
     let mut fail_count = 0;
 
@@ -146,6 +161,23 @@ pub async fn doctor() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for (name, skill) in &config.skills {
+        if !skill.enabled {
+            print_diagnostic(
+                DiagnosticLevel::Pass,
+                format!("skill '{}' is intentionally inactive; runtime operations skipped", name),
+            );
+            inactive_count += 1;
+            continue;
+        }
+        if !skill.sync_enabled {
+            print_diagnostic(
+                DiagnosticLevel::Pass,
+                format!("skill '{}' is runtime inactive; sync operations skipped", name),
+            );
+            inactive_count += 1;
+            continue;
+        }
+
         let manifest = load_manifest_for_config_skill(name, skill, &tmp_path);
         match manifest {
             Some(manifest) => {
@@ -205,8 +237,8 @@ pub async fn doctor() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!(
-        "Summary: {} pass, {} warn, {} fail",
-        pass_count, warn_count, fail_count
+        "Summary: {} pass, {} inactive, {} warn, {} fail",
+        pass_count, inactive_count, warn_count, fail_count
     );
 
     if fail_count > 0 {
@@ -220,6 +252,7 @@ pub async fn doctor_summary() -> Result<String, Box<dyn std::error::Error>> {
     let (config_path, config, lockfile_path, lockfile) = super::config_and_lockfile()?;
     let tmp_path = super::tmp_root()?;
     let mut pass_count = 0;
+    let mut inactive_count = 0;
     let mut warn_count = 0;
     let mut fail_count = 0;
     let mut lines = vec![
@@ -238,16 +271,42 @@ pub async fn doctor_summary() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     for (name, skill) in &config.skills {
-        let summary = skill_summary(name, skill, lockfile.as_ref(), &tmp_path, &ContentStore::default());
+        if !skill.enabled {
+            lines.push(format!("{} :: intentionally-inactive :: disabled", name));
+            inactive_count += 1;
+            continue;
+        }
+        if !skill.sync_enabled {
+            lines.push(format!("{} :: runtime-inactive :: unsynced", name));
+            inactive_count += 1;
+            continue;
+        }
+
+        let summary = skill_summary(
+            name,
+            skill,
+            lockfile.as_ref(),
+            &tmp_path,
+            &ContentStore::default(),
+        );
         if summary.outdated == "up-to-date" {
             pass_count += 1;
         } else {
             warn_count += 1;
         }
-        lines.push(format!("{} :: {} :: {}", name, summary.outdated, summary.lock_summary));
+        lines.push(format!(
+            "{} :: lifecycle: {}",
+            name,
+            lifecycle_stage(&summary)
+        ));
+        lines.push(format!("{} :: outdated: {}", name, summary.outdated));
+        lines.push(format!("{} :: lock: {}", name, summary.lock_summary));
     }
 
-    lines.push(format!("Summary: {} pass, {} warn, {} fail", pass_count, warn_count, fail_count));
+    lines.push(format!(
+        "Summary: {} pass, {} inactive, {} warn, {} fail",
+        pass_count, inactive_count, warn_count, fail_count
+    ));
     Ok(lines.join("\n"))
 }
 

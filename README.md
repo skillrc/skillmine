@@ -2,7 +2,7 @@ SKILLMINE(1)
 
 ```text
 NAME
-       skillmine - package manager, sync engine, and diagnostics tool
+       skillmine - skill creation, package management, sync engine, and diagnostics tool
        for AI coding assistant skills
 
 SYNOPSIS
@@ -11,15 +11,16 @@ SYNOPSIS
 
 ```text
 DESCRIPTION
-       Skillmine manages skill packages declaratively across Claude Code,
-       OpenCode, and related assistant runtimes.
+       Skillmine creates and manages skill packages declaratively across
+       Claude Code, OpenCode, and related assistant runtimes.
 
-       It resolves package sources, writes lock state, materializes content
-       into content-addressable storage, and syncs runtime assets into target
+       It scaffolds manifest-first local skill packages, resolves package
+       sources, writes lock state, materializes content into
+       content-addressable storage, and syncs runtime assets into target
        assistant directories.
 
-       It is a downstream package/runtime tool. It does not own upstream skill
-       authoring workflows.
+       Skillmine now supports the full local lifecycle:
+       create -> add -> install -> sync -> doctor.
 ```
 
 ```text
@@ -27,14 +28,19 @@ COMMANDS
        +------------------+-------------------------------------------+
        | Command          | Description                               |
        +------------------+-------------------------------------------+
+       | create <name>    | Generate a local skill package skeleton   |
        | init             | Initialize skills.toml                    |
-       | add <repo>       | Add skill from GitHub                     |
+       | add <repo>       | Add skill from GitHub or local path       |
        | install          | Resolve and cache configured skills       |
        | sync --target    | Symlink runtime assets to assistant target|
        | freeze           | Generate lockfile                         |
        | thaw             | Apply lockfile state back into config     |
        | update [name]    | Refresh skill(s)                          |
        | remove <name>    | Remove configured skill                   |
+       | enable <name>    | Enable configured skill                   |
+       | disable <name>   | Disable configured skill                  |
+       | unsync <name>    | Disable runtime sync for a skill          |
+       | resync <name>    | Re-enable runtime sync for a skill        |
        | list             | Show skill summaries                      |
        | info <name>      | Show detailed package metadata            |
        | outdated         | Report drift or updates                   |
@@ -57,10 +63,24 @@ cargo build --release
 QUICK START
 mkdir project && cd project
 skillmine init
-skillmine add octocat/Hello-World
+skillmine create my-skill
+skillmine add ./my-skill
 skillmine install
 skillmine sync --target=opencode
 skillmine doctor
+```
+
+```text
+MENTAL MODEL
+       Create generates a new local skill package scaffold.
+       Add registers a skill source in config.
+       Install prepares configured skills in local managed state.
+       Sync exposes configured skills to an assistant runtime target.
+
+       Source types:
+       - GitHub ref: owner/repo[/path]
+       - Local path: /path/to/skill
+       - Version reference: registry version constraint
 ```
 
 ```text
@@ -110,9 +130,12 @@ SYNC TARGETS
        +-------------+-----------------------------------------------+
        | claude      | ~/.claude/skills/                             |
        | opencode    | ~/.config/opencode/skills/                    |
-       | cursor      | ~/.cursor/skills/                             |
-       | custom      | --path=/custom/path                           |
        +-------------+-----------------------------------------------+
+```
+
+```text
+       Current built-in targets are `claude` and `opencode`.
+       Custom paths are supported through the CLI `--path` option.
 ```
 
 ```toml
@@ -158,11 +181,15 @@ DOCTOR OUTPUT
 
 ```text
 TUI
-       The terminal UI is a thin boundary over package operations.
+        The terminal UI is a thin boundary over package operations.
 
-       It loads summaries, triggers install/update/sync/remove/doctor flows,
-       and relies on a dedicated execution boundary so runtime package actions
-       do not redefine package semantics inside the UI layer.
+        It loads summaries, triggers install/update/sync/remove/doctor flows,
+        and relies on a dedicated execution boundary so runtime package actions
+        do not redefine package semantics inside the UI layer.
+
+        Current TUI sync target cycling supports `opencode` and `claude`.
+        In the TUI, add means add a source to config, install means prepare it
+        locally, and sync means expose configured skills to the current target.
 ```
 
 ```text
@@ -180,6 +207,9 @@ UNIX MODEL
 FILES
        ./skills.toml
               Desired package configuration.
+
+       ./docs/bugs.md
+              Lightweight in-repository bug backlog entry point.
 
        ./skills.lock.toml
               Resolved package state.
