@@ -3,7 +3,7 @@ export default function Terminal() {
     { prompt: '$', cmd: 'skillmine create my-skill', output: 'Created ./my-skill with SKILL.toml and starter files' },
     { prompt: '$', cmd: 'skillmine add ./my-skill', output: 'Registered my-skill in managed configuration' },
     { prompt: '$', cmd: 'skillmine install', output: 'Installing 3 skills...\n  ✓ Hello-World\n  ✓ git-release\n  ✓ python-testing' },
-    { prompt: '$', cmd: 'skillmine sync --target=claude', output: 'Synced 3 skills to ~/.claude/skills/' },
+    { prompt: '$', cmd: 'skillmine sync --target=claude', output: 'Synced 3 skills to ~/.claude/skills/ (public alpha target)' },
     { prompt: '$', cmd: 'skillmine doctor', output: '✓ Configuration valid\n✓ Lifecycle healthy\n✓ No drift detected' },
   ]
 

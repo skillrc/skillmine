@@ -1,13 +1,14 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'Skillmine - Closed-Loop Lifecycle for AI Skills',
-  description: 'Create, register, install, sync, and doctor AI coding assistant skills with deterministic state across Claude Code, OpenCode, and Cursor.',
-  keywords: ['skillmine', 'AI skills', 'skill lifecycle', 'claude code', 'opencode', 'cursor', 'AI coding assistant'],
+  title: 'Skillmine - Public Alpha Skill Lifecycle for AI Skills',
+  description: 'Public alpha for create, register, install, sync, and doctor workflows across Claude Code and OpenCode.',
+  keywords: ['skillmine', 'AI skills', 'skill lifecycle', 'claude code', 'opencode', 'AI coding assistant', 'public alpha'],
+  metadataBase: new URL('https://skillmine-app.vercel.app'),
   authors: [{ name: 'Skillmine' }],
   openGraph: {
-    title: 'Skillmine - Closed-Loop Lifecycle for AI Skills',
-    description: 'Create, register, install, sync, and doctor AI coding assistant skills.',
+    title: 'Skillmine - Public Alpha Skill Lifecycle for AI Skills',
+    description: 'Public alpha for create, register, install, sync, and doctor AI coding assistant skills.',
     type: 'website',
   },
 }

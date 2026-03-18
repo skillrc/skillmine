@@ -10,7 +10,7 @@ export default function Hero() {
           <div className="space-y-8">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/10 bg-white/5">
               <span className="text-2xl">⛏</span>
-              <span className="text-sm font-medium text-secondary">Closed-loop lifecycle for AI skills</span>
+              <span className="text-sm font-medium text-secondary">Public alpha for the closed-loop skill lifecycle</span>
             </div>
             
             <h1 className="text-5xl lg:text-7xl font-bold leading-tight">
@@ -22,7 +22,7 @@ export default function Hero() {
             </h1>
             
             <p className="text-xl text-secondary max-w-lg">
-              The native create-to-doctor workflow for Claude Code, OpenCode, and Cursor. Build local skills, register them declaratively, install deterministically, sync targets, and diagnose drift.
+              The native create-to-doctor workflow for Claude Code and OpenCode. Build local skills, register them declaratively, install deterministically, sync supported targets, and diagnose drift.
             </p>
             
             <div className="flex flex-wrap gap-4">

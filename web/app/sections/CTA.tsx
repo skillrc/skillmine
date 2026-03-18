@@ -12,6 +12,12 @@ export default function CTA() {
           <p className="text-xl text-secondary mb-10">
             Install Skillmine and run the full loop from `create` to `doctor` with one CLI.
           </p>
+
+          <div className="mb-8 rounded-2xl border border-white/10 bg-white/5 p-5 text-left text-secondary">
+            <p className="font-semibold text-white mb-2">Public alpha status</p>
+            <p>Supported runtime targets: Claude Code and OpenCode.</p>
+            <p>Known limitations: no Cursor target in this alpha, and the website is documentation-only.</p>
+          </div>
           
           <div className="code-block p-6 text-left mb-10 max-w-2xl mx-auto">
             <div className="flex items-center justify-between mb-4">
@@ -26,6 +32,14 @@ export default function CTA() {
           <div className="flex flex-wrap justify-center gap-4">
             <a href="#how-it-works" className="btn-primary">
               Get Started
+            </a>
+            <a 
+              href="https://skillmine-app.vercel.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary"
+            >
+              Live Site
             </a>
             <a 
               href="https://github.com/skillrc/skillmine" 

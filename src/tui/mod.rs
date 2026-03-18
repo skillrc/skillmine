@@ -462,7 +462,7 @@ fn run_loop(
                     frame,
                     centered_rect(70, 40, frame.area()),
                     "Help",
-                    "j/k or ↑/↓: move\n: command palette\ncreate: shows local package flow guidance (create -> add -> install -> sync)\na: add source to config after create\ne: enable selected skill\nD: disable selected skill\nn: unsync selected skill from runtime targets\nR: resync selected skill to runtime targets\n/: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\ni: install selected skill locally\nu: update selected skill source\nt: cycle runtime target (opencode/claude)\ns: sync configured skills to current target\nx: remove selected skill from config\nd: run doctor summary\nr: refresh\n?: toggle help\nq: quit".to_string(),
+                    "j/k or ↑/↓: move\n: command palette\ncreate: shows local package flow guidance (create -> add -> install -> sync)\na: add source to config after create\ne: enable selected skill\nD: disable selected skill\nn: unsync selected skill from runtime targets\nR: resync selected skill to runtime targets\n/: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\ni: install selected skill locally\nu: update selected skill source\nt: cycle runtime target (opencode/claude)\ns: sync configured skills to current target\ncustom sync paths stay in CLI: skillmine sync --path <dir>\nx: remove selected skill from config\nd: run doctor summary\nr: refresh\n?: toggle help\nq: quit".to_string(),
                     app.modal_scroll,
                 );
             }
@@ -1450,6 +1450,17 @@ mod tests {
 
         assert!(commands.contains(&"create"));
         assert!(app.status.contains("create"));
+    }
+
+    #[test]
+    fn help_text_mentions_cli_only_custom_sync_paths() {
+        let app = App::new(vec![sample_skill("demo")]);
+
+        assert!(app.status.contains("create"));
+        assert!(
+            "j/k or ↑/↓: move\n: command palette\ncreate: shows local package flow guidance (create -> add -> install -> sync)\na: add source to config after create\ne: enable selected skill\nD: disable selected skill\nn: unsync selected skill from runtime targets\nR: resync selected skill to runtime targets\n/: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\ni: install selected skill locally\nu: update selected skill source\nt: cycle runtime target (opencode/claude)\ns: sync configured skills to current target\ncustom sync paths stay in CLI: skillmine sync --path <dir>\nx: remove selected skill from config\nd: run doctor summary\nr: refresh\n?: toggle help\nq: quit"
+                .contains("skillmine sync --path <dir>")
+        );
     }
 
     #[test]

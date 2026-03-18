@@ -3,25 +3,25 @@ export default function Footer() {
     {
       title: 'Product',
       items: [
-        { label: 'Documentation', href: '#' },
-        { label: 'CLI Reference', href: '#' },
-        { label: 'Changelog', href: '#' },
+        { label: 'README', href: 'https://github.com/skillrc/skillmine#readme' },
+        { label: 'Issues', href: 'https://github.com/skillrc/skillmine/issues' },
+        { label: 'Live Site', href: 'https://skillmine-app.vercel.app/' },
       ],
     },
     {
       title: 'Community',
       items: [
         { label: 'GitHub', href: 'https://github.com/skillrc/skillmine' },
-        { label: 'Discussions', href: '#' },
-        { label: 'Discord', href: '#' },
+        { label: 'Bug Backlog', href: 'https://github.com/skillrc/skillmine/blob/main/docs/bugs.md' },
+        { label: 'Public Alpha', href: 'https://github.com/skillrc/skillmine#readme' },
       ],
     },
     {
       title: 'Legal',
       items: [
-        { label: 'License', href: '#' },
-        { label: 'Privacy', href: '#' },
-        { label: 'Terms', href: '#' },
+        { label: 'License', href: 'https://github.com/skillrc/skillmine/blob/main/LICENSE' },
+        { label: 'Repository', href: 'https://github.com/skillrc/skillmine' },
+        { label: 'Alpha Scope', href: 'https://github.com/skillrc/skillmine#readme' },
       ],
     },
   ]
@@ -36,7 +36,7 @@ export default function Footer() {
               <span className="text-2xl font-bold gradient-text">Skillmine</span>
             </div>
             <p className="text-secondary max-w-sm mb-6">
-              Closed-loop lifecycle for AI coding assistant skills, from local creation to runtime sync and diagnostics.
+              Public alpha for the closed-loop lifecycle of AI coding assistant skills, from local creation to runtime sync and diagnostics.
             </p>
             <div className="flex gap-4">
               <a 
@@ -73,7 +73,7 @@ export default function Footer() {
         
         <div className="border-t border-white/10 mt-12 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-muted text-sm">
-            MIT License. Built with Rust. Create → Add/Register → Install → Sync → Doctor.
+            MIT License. Built with Rust. Public alpha supports Claude Code and OpenCode. Create → Add/Register → Install → Sync → Doctor.
           </p>
           <p className="text-muted text-sm">
             © {new Date().getFullYear()} Skillmine

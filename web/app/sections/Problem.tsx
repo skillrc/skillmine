@@ -24,7 +24,7 @@ const problems = [
       </svg>
     ),
     title: 'Manual Sync Hell',
-    description: 'Copying files between Claude, OpenCode, and Cursor. Updating one assistant means repeating work three times.',
+    description: 'Copying files between Claude Code and OpenCode. Updating one assistant still means repeating runtime setup by hand.',
   },
   {
     icon: (

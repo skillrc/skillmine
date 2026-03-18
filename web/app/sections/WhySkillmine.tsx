@@ -27,8 +27,8 @@ const features = [
     ),
   },
   {
-    title: 'Multi-Runtime Support',
-    description: 'Sync skills to Claude Code, OpenCode, and Cursor. One config, many targets.',
+    title: 'Alpha Runtime Support',
+    description: 'Sync skills to Claude Code and OpenCode in the current public alpha. One config, supported targets kept explicit.',
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />
@@ -75,7 +75,7 @@ export default function WhySkillmine() {
             Built for <span className="gradient-text">AI-native</span> workflows
           </h2>
           <p className="text-xl text-secondary max-w-2xl mx-auto">
-            Not just downstream install and sync. A complete lifecycle for creating, managing, shipping, and validating AI skills.
+            Not just downstream install and sync. A public alpha lifecycle for creating, managing, shipping, and validating AI skills.
           </p>
         </div>
         

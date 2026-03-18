@@ -36,7 +36,7 @@ export const lifecycleSteps: LifecycleStep[] = [
     command: 'sync',
     title: 'Sync',
     description:
-      'Expose skills to your assistant runtime. Works with Claude Code, OpenCode, and Cursor.',
+      'Expose skills to your assistant runtime. Public alpha supports Claude Code and OpenCode.',
     code: 'skillmine sync --target=claude',
   },
   {

@@ -12,7 +12,7 @@ SYNOPSIS
 ```text
 DESCRIPTION
        Skillmine creates and manages skill packages declaratively across
-       Claude Code, OpenCode, and related assistant runtimes.
+       Claude Code and OpenCode.
 
        It scaffolds manifest-first local skill packages, resolves package
        sources, writes lock state, materializes content into
@@ -21,6 +21,22 @@ DESCRIPTION
 
        Skillmine now supports the full local lifecycle:
        create -> add -> install -> sync -> doctor.
+
+       Status: public alpha.
+```
+
+```text
+PUBLIC ALPHA STATUS
+       Skillmine is currently in public alpha.
+
+       Supported runtime targets in this release:
+       - claude
+       - opencode
+
+       Known limitations:
+       - no Cursor runtime target in the current alpha
+       - website is informational and does not execute lifecycle actions
+       - TUI focuses on the supported alpha lifecycle rather than advanced configuration editing
 ```
 
 ```text
@@ -138,6 +154,15 @@ SYNC TARGETS
        Custom paths are supported through the CLI `--path` option.
 ```
 
+```text
+ALPHA RELEASE CHECKLIST
+       - README, website, and GitHub metadata describe the same product model
+       - create/add/install/sync/doctor flow is documented and tested
+       - only supported runtime targets (`claude`, `opencode`) are advertised
+       - known limitations are visible to alpha users
+       - generated build artifacts are excluded from version control
+```
+
 ```toml
 CONFIGURATION
 
@@ -181,15 +206,18 @@ DOCTOR OUTPUT
 
 ```text
 TUI
-        The terminal UI is a thin boundary over package operations.
+         The terminal UI is a thin boundary over package operations.
 
         It loads summaries, triggers install/update/sync/remove/doctor flows,
         and relies on a dedicated execution boundary so runtime package actions
         do not redefine package semantics inside the UI layer.
 
-        Current TUI sync target cycling supports `opencode` and `claude`.
-        In the TUI, add means add a source to config, install means prepare it
-        locally, and sync means expose configured skills to the current target.
+         Current TUI sync target cycling supports `opencode` and `claude`.
+         In the TUI, add means add a source to config, install means prepare it
+         locally, and sync means expose configured skills to the current target.
+
+         Public alpha scope keeps the TUI focused on the supported lifecycle
+         path rather than deeper configuration editing.
 ```
 
 ```text
@@ -210,6 +238,12 @@ FILES
 
        ./docs/bugs.md
               Lightweight in-repository bug backlog entry point.
+
+       ./docs/alpha-parity-qa.md
+              Alpha parity evidence for CLI and TUI.
+
+       ./docs/alpha-release-readiness.md
+              Executed public alpha readiness checklist and known limitations.
 
        ./skills.lock.toml
               Resolved package state.
