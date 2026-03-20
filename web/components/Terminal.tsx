@@ -73,7 +73,7 @@ export default function Terminal() {
           <div className="terminal-dot terminal-dot-green"></div>
         </div>
         <div className="flex-1 text-center">
-          <span className="text-xs text-gray-500 font-mono">skillmine</span>
+          <span className="text-xs text-white/30 font-mono">skillmine</span>
         </div>
         <div className="w-16"></div>
       </div>
@@ -116,7 +116,7 @@ export default function Terminal() {
         
         <div className="flex items-center gap-2 pt-2">
           <span className="terminal-prompt font-semibold">$</span>
-          <span className="w-2 h-4 bg-coral-500 animate-pulse"></span>
+          <span className="w-2 h-4 bg-aurora-300 animate-pulse"></span>
         </div>
       </div>
     </div>
