@@ -54,7 +54,7 @@ export default function Footer() {
   return (
     <footer 
       ref={footerRef}
-      className="bg-obsidian border-t border-white/5"
+      className="bg-surface border-t border-border"
     >
       <div className="container py-16 lg:py-20">
         <div 
@@ -64,10 +64,10 @@ export default function Footer() {
         >
           <div className="lg:col-span-1">
             <div className="flex items-center gap-3 mb-5">
-              <span className="text-3xl">⛏</span>
-              <span className="text-2xl font-bold gradient-text">Skillmine</span>
+              <span className="text-2xl">⛏</span>
+              <span className="text-xl font-semibold gradient-text">Skillmine</span>
             </div>
-            <p className="text-text-secondary text-sm leading-relaxed max-w-xs mb-6">
+            <p className="text-gray-400 text-sm leading-relaxed max-w-xs mb-6">
               Public alpha for the closed-loop lifecycle of AI coding assistant skills, from local creation to runtime sync and diagnostics.
             </p>
             
@@ -76,7 +76,7 @@ export default function Footer() {
                 href="https://github.com/skillrc/skillmine" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="w-10 h-10 rounded-xl glass glass-border flex items-center justify-center text-text-muted hover:text-text-primary hover:border-brand-orange/30 transition-all duration-200"
+                className="w-10 h-10 rounded-xl bg-surface-elevated border border-border flex items-center justify-center text-gray-400 hover:text-white hover:border-border-hover transition-all duration-200"
                 aria-label="GitHub"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -94,7 +94,7 @@ export default function Footer() {
               }`}
               style={{ transitionDelay: isVisible ? `${100 + idx * 100}ms` : '0ms' }}
             >
-              <h4 className="font-semibold text-text-primary mb-4 text-sm uppercase tracking-wider">
+              <h4 className="font-semibold text-white mb-4 text-sm uppercase tracking-wider">
                 {group.title}
               </h4>
               <ul className="space-y-3">
@@ -104,7 +104,7 @@ export default function Footer() {
                       href={item.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-text-secondary hover:text-brand-orange transition-colors duration-200 text-sm"
+                      className="text-gray-400 hover:text-coral-400 transition-colors duration-200 text-sm"
                     >
                       {item.label}
                     </a>
@@ -116,15 +116,15 @@ export default function Footer() {
         </div>
         
         <div 
-          className={`border-t border-white/5 mt-12 pt-8 transition-all duration-700 delay-300 ${
+          className={`border-t border-border mt-12 pt-8 transition-all duration-700 delay-300 ${
             isVisible ? 'opacity-100' : 'opacity-0'
           }`}
         >
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-            <p className="text-text-muted text-xs text-center md:text-left">
+            <p className="text-gray-500 text-xs text-center md:text-left">
               MIT License · Built with Rust · Public alpha supports Claude Code and OpenCode
             </p>
-            <p className="text-text-muted text-xs">
+            <p className="text-gray-500 text-xs">
               © {new Date().getFullYear()} Skillmine
             </p>
           </div>

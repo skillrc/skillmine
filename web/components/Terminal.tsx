@@ -65,15 +65,15 @@ export default function Terminal() {
   }, [])
 
   return (
-    <div className="terminal animate-slide-up">
-      <div className="terminal-header flex items-center gap-3">
+    <div className="terminal">
+      <div className="terminal-header">
         <div className="flex gap-2">
-          <div className="w-3 h-3 rounded-full bg-red-500/80 hover:bg-red-400 transition-colors cursor-pointer"></div>
-          <div className="w-3 h-3 rounded-full bg-yellow-500/80 hover:bg-yellow-400 transition-colors cursor-pointer"></div>
-          <div className="w-3 h-3 rounded-full bg-green-500/80 hover:bg-green-400 transition-colors cursor-pointer"></div>
+          <div className="terminal-dot terminal-dot-red"></div>
+          <div className="terminal-dot terminal-dot-yellow"></div>
+          <div className="terminal-dot terminal-dot-green"></div>
         </div>
         <div className="flex-1 text-center">
-          <span className="text-xs text-text-muted font-mono">skillmine — bash</span>
+          <span className="text-xs text-gray-500 font-mono">skillmine</span>
         </div>
         <div className="w-16"></div>
       </div>
@@ -106,7 +106,7 @@ export default function Terminal() {
               style={{ transitionDelay: typingLines.includes(idx) ? `${item.cmd.length * 30 + 200}ms` : '0ms' }}
             >
               {item.output.split('\n').map((line, lineIdx) => (
-                <div key={lineIdx} className={line.startsWith('✓') ? 'text-green-500' : ''}>
+                <div key={lineIdx} className={line.startsWith('✓') ? 'terminal-success' : ''}>
                   {line}
                 </div>
               ))}
@@ -116,7 +116,7 @@ export default function Terminal() {
         
         <div className="flex items-center gap-2 pt-2">
           <span className="terminal-prompt font-semibold">$</span>
-          <span className="terminal-cursor"></span>
+          <span className="w-2 h-4 bg-coral-500 animate-pulse"></span>
         </div>
       </div>
     </div>

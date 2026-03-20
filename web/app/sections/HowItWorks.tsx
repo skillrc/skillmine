@@ -29,12 +29,10 @@ export default function HowItWorks() {
     <section 
       id="how-it-works" 
       ref={sectionRef}
-      className="section bg-deep-slate relative overflow-hidden"
+      className="section bg-surface-raised relative overflow-hidden"
     >
-      <div className="absolute inset-0 grid-pattern opacity-20" />
-      
       <div className="container relative z-10">
-        <div className="text-center mb-16">
+        <div className="max-w-3xl mx-auto text-center mb-16">
           <div 
             className={`transition-all duration-700 ${
               isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
@@ -44,16 +42,16 @@ export default function HowItWorks() {
           </div>
           
           <h2 
-            className={`text-4xl lg:text-5xl font-bold mb-6 tracking-[-0.02em] transition-all duration-700 delay-100 ${
+            className={`section-title mb-6 transition-all duration-700 delay-100 ${
               isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
             }`}
           >
             The closed-loop{' '}
-            <span className="gradient-text">lifecycle</span>
+            <span className="gradient-text-coral">lifecycle</span>
           </h2>
           
           <p 
-            className={`text-lg lg:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed transition-all duration-700 delay-200 ${
+            className={`section-description mx-auto transition-all duration-700 delay-200 ${
               isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
             }`}
           >
@@ -61,7 +59,7 @@ export default function HowItWorks() {
           </p>
         </div>
 
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-3xl mx-auto">
           {lifecycleSteps.map((step, idx) => (
             <div 
               key={idx} 
@@ -70,37 +68,31 @@ export default function HowItWorks() {
               }`}
               style={{ transitionDelay: isVisible ? `${300 + idx * 150}ms` : '0ms' }}
             >
-              {/* Connector line */}
               {idx !== lifecycleSteps.length - 1 && (
-                <div className="absolute left-8 top-20 w-px h-[calc(100%-40px)] hidden md:block">
-                  <div className="w-full h-full bg-gradient-to-b from-brand-orange/50 via-brand-orange/20 to-transparent" />
-                </div>
+                <div className="absolute left-6 top-16 w-px h-[calc(100%-32px)] hidden md:block bg-gradient-to-b from-coral-500/50 to-transparent" />
               )}
 
-              <div className="flex flex-col md:flex-row gap-6 md:gap-8 pb-12 last:pb-0">
+              <div className="flex gap-6 pb-12 last:pb-0">
                 <div className="flex-shrink-0">
-                  <div className="relative">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-orange/20 to-brand-orange/5 border border-brand-orange/30 flex items-center justify-center relative z-10 shadow-glow-orange">
-                      <span className="text-2xl font-bold text-brand-orange">{step.number}</span>
-                    </div>
-                    <div className="absolute inset-0 rounded-2xl bg-brand-orange/20 blur-xl" />
+                  <div className="w-12 h-12 rounded-xl bg-coral-500/10 border border-coral-500/20 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-coral-500">{step.number}</span>
                   </div>
                 </div>
 
                 <div className="flex-1 pt-1">
-                  <h3 className="text-2xl font-semibold mb-3 text-text-primary">
+                  <h3 className="text-xl font-semibold mb-2 text-white">
                     {step.title}
                   </h3>
-                  <p className="text-text-secondary mb-5 leading-relaxed">
+                  <p className="text-gray-400 mb-5 leading-relaxed">
                     {step.description}
                   </p>
 
-                  <div className="code-block p-4 font-mono text-sm group cursor-pointer hover:border-brand-orange/30 transition-colors duration-300">
+                  <div className="code-block group cursor-pointer hover:border-coral-500/30 transition-colors duration-300">
                     <div className="flex items-center gap-2">
-                      <span className="text-brand-orange font-semibold">$</span>
-                      <span className="text-cyan-bright">{step.code}</span>
+                      <span className="terminal-prompt font-semibold">$</span>
+                      <span className="terminal-command">{step.code}</span>
                       <button 
-                        className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-text-muted hover:text-text-primary"
+                        className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-gray-500 hover:text-white"
                         onClick={() => navigator.clipboard.writeText(step.code)}
                         title="Copy to clipboard"
                       >
