@@ -1,41 +1,122 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+
+interface Command {
+  prompt: string
+  cmd: string
+  output: string
+}
+
+const commands: Command[] = [
+  { prompt: '$', cmd: 'skillmine create my-skill', output: 'Created ./my-skill with SKILL.toml and starter files' },
+  { prompt: '$', cmd: 'skillmine add ./my-skill', output: 'Registered my-skill in managed configuration' },
+  { prompt: '$', cmd: 'skillmine install', output: 'Installing 3 skills...\n  ✓ Hello-World\n  ✓ git-release\n  ✓ python-testing' },
+  { prompt: '$', cmd: 'skillmine sync --target=claude', output: 'Synced 3 skills to ~/.claude/skills/ (public alpha target)' },
+  { prompt: '$', cmd: 'skillmine doctor', output: '✓ Configuration valid\n✓ Lifecycle healthy\n✓ No drift detected' },
+]
+
+function TypewriterText({ text, delay = 0, onComplete }: { text: string; delay?: number; onComplete?: () => void }) {
+  const [displayText, setDisplayText] = useState('')
+  const [started, setStarted] = useState(false)
+
+  useEffect(() => {
+    const startTimeout = setTimeout(() => setStarted(true), delay)
+    return () => clearTimeout(startTimeout)
+  }, [delay])
+
+  useEffect(() => {
+    if (!started) return
+
+    let index = 0
+    const interval = setInterval(() => {
+      if (index <= text.length) {
+        setDisplayText(text.slice(0, index))
+        index++
+      } else {
+        clearInterval(interval)
+        onComplete?.()
+      }
+    }, 30)
+
+    return () => clearInterval(interval)
+  }, [started, text, onComplete])
+
+  return <span>{displayText}</span>
+}
+
 export default function Terminal() {
-  const commands = [
-    { prompt: '$', cmd: 'skillmine create my-skill', output: 'Created ./my-skill with SKILL.toml and starter files' },
-    { prompt: '$', cmd: 'skillmine add ./my-skill', output: 'Registered my-skill in managed configuration' },
-    { prompt: '$', cmd: 'skillmine install', output: 'Installing 3 skills...\n  ✓ Hello-World\n  ✓ git-release\n  ✓ python-testing' },
-    { prompt: '$', cmd: 'skillmine sync --target=claude', output: 'Synced 3 skills to ~/.claude/skills/ (public alpha target)' },
-    { prompt: '$', cmd: 'skillmine doctor', output: '✓ Configuration valid\n✓ Lifecycle healthy\n✓ No drift detected' },
-  ]
+  const [visibleLines, setVisibleLines] = useState(0)
+  const [typingLines, setTypingLines] = useState<number[]>([])
+
+  useEffect(() => {
+    let lineIndex = 0
+    const showInterval = setInterval(() => {
+      if (lineIndex < commands.length) {
+        setVisibleLines(prev => prev + 1)
+        setTypingLines(prev => [...prev, lineIndex])
+        lineIndex++
+      } else {
+        clearInterval(showInterval)
+      }
+    }, 800)
+
+    return () => clearInterval(showInterval)
+  }, [])
 
   return (
     <div className="terminal animate-slide-up">
-      <div className="terminal-header px-4 py-3 flex items-center gap-2">
+      <div className="terminal-header flex items-center gap-3">
         <div className="flex gap-2">
-          <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-          <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-          <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+          <div className="w-3 h-3 rounded-full bg-red-500/80 hover:bg-red-400 transition-colors cursor-pointer"></div>
+          <div className="w-3 h-3 rounded-full bg-yellow-500/80 hover:bg-yellow-400 transition-colors cursor-pointer"></div>
+          <div className="w-3 h-3 rounded-full bg-green-500/80 hover:bg-green-400 transition-colors cursor-pointer"></div>
         </div>
         <div className="flex-1 text-center">
-          <span className="text-xs text-muted font-mono">skillmine — bash</span>
+          <span className="text-xs text-text-muted font-mono">skillmine — bash</span>
         </div>
         <div className="w-16"></div>
       </div>
       
-      <div className="p-6 font-mono text-sm space-y-4 overflow-x-auto">
+      <div className="terminal-body space-y-4 overflow-x-auto">
         {commands.map((item, idx) => (
-          <div key={idx} className="space-y-1">
+          <div 
+            key={idx} 
+            className={`space-y-2 transition-all duration-500 ${
+              idx < visibleLines ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
             <div className="flex items-start gap-2">
-              <span className="text-brand-orange">{item.prompt}</span>
-              <span className="text-cyan-bright">{item.cmd}</span>
+              <span className="terminal-prompt font-semibold">{item.prompt}</span>
+              <span className="terminal-command">
+                {typingLines.includes(idx) ? (
+                  <TypewriterText 
+                    text={item.cmd} 
+                    delay={idx === 0 ? 500 : 0}
+                  />
+                ) : (
+                  item.cmd
+                )}
+              </span>
             </div>
-            <div className="pl-6 text-text-secondary whitespace-pre-line">
-              {item.output}
+            <div 
+              className={`pl-6 terminal-output whitespace-pre-line transition-all duration-500 ${
+                idx < visibleLines ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+              }`}
+              style={{ transitionDelay: typingLines.includes(idx) ? `${item.cmd.length * 30 + 200}ms` : '0ms' }}
+            >
+              {item.output.split('\n').map((line, lineIdx) => (
+                <div key={lineIdx} className={line.startsWith('✓') ? 'text-green-500' : ''}>
+                  {line}
+                </div>
+              ))}
             </div>
           </div>
         ))}
-        <div className="flex items-center gap-2">
-          <span className="text-brand-orange">$</span>
-          <span className="w-2 h-4 bg-brand-orange animate-pulse"></span>
+        
+        <div className="flex items-center gap-2 pt-2">
+          <span className="terminal-prompt font-semibold">$</span>
+          <span className="terminal-cursor"></span>
         </div>
       </div>
     </div>

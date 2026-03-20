@@ -1,8 +1,12 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+
 const problems = [
   {
     icon: (
-      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+      <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
       </svg>
     ),
     title: 'Skill Chaos',
@@ -10,8 +14,8 @@ const problems = [
   },
   {
     icon: (
-      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+      <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
       </svg>
     ),
     title: 'Version Drift',
@@ -19,8 +23,8 @@ const problems = [
   },
   {
     icon: (
-      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+      <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
       </svg>
     ),
     title: 'Manual Sync Hell',
@@ -28,9 +32,8 @@ const problems = [
   },
   {
     icon: (
-      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-      >
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
     ),
     title: 'No Visibility',
@@ -39,15 +42,59 @@ const problems = [
 ]
 
 export default function Problem() {
+  const sectionRef = useRef<HTMLElement>(null)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true)
+          observer.unobserve(entry.target)
+        }
+      },
+      { threshold: 0.2 }
+    )
+
+    if (sectionRef.current) {
+      observer.observe(sectionRef.current)
+    }
+
+    return () => observer.disconnect()
+  }, [])
+
   return (
-    <section className="section bg-obsidian">
-      <div className="container">
+    <section 
+      id="problem"
+      ref={sectionRef}
+      className="section bg-obsidian relative overflow-hidden"
+    >
+      <div className="absolute inset-0 grid-pattern-dense opacity-20" />
+      
+      <div className="container relative z-10">
         <div className="text-center mb-16">
-          <p className="text-brand-orange font-semibold mb-4">THE PROBLEM</p>
-          <h2 className="text-4xl lg:text-5xl font-bold mb-6">
-            Managing AI skills is <span className="gradient-text">a mess</span>
+          <div 
+            className={`transition-all duration-700 ${
+              isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+            }`}
+          >
+            <span className="section-label">The Problem</span>
+          </div>
+          
+          <h2 
+            className={`text-4xl lg:text-5xl font-bold mb-6 tracking-[-0.02em] transition-all duration-700 delay-100 ${
+              isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+            }`}
+          >
+            Managing AI skills is{' '}
+            <span className="gradient-text">a mess</span>
           </h2>
-          <p className="text-xl text-secondary max-w-2xl mx-auto">
+          
+          <p 
+            className={`text-lg lg:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed transition-all duration-700 delay-200 ${
+              isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+            }`}
+          >
             You have powerful AI assistants, but no good way to create, organize, version,
             and sync the skills that make them useful.
           </p>
@@ -57,11 +104,27 @@ export default function Problem() {
           {problems.map((problem, idx) => (
             <div
               key={idx}
-              className="p-8 rounded-2xl border border-white/10 bg-surface card-hover"
+              className={`group p-8 rounded-2xl glass glass-border-hover transition-all duration-500 ${
+                isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+              }`}
+              style={{ transitionDelay: isVisible ? `${300 + idx * 100}ms` : '0ms' }}
             >
-              <div className="text-brand-orange mb-4">{problem.icon}</div>
-              <h3 className="text-xl font-semibold mb-2">{problem.title}</h3>
-              <p className="text-secondary">{problem.description}</p>
+              <div className="flex items-start gap-5">
+                <div className="flex-shrink-0">
+                  <div className="w-14 h-14 rounded-xl bg-brand-orange/10 border border-brand-orange/20 flex items-center justify-center text-brand-orange transition-all duration-300 group-hover:bg-brand-orange group-hover:text-white group-hover:shadow-glow-orange">
+                    {problem.icon}
+                  </div>
+                </div>
+                
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-xl font-semibold mb-2 text-text-primary group-hover:text-brand-orange transition-colors duration-300">
+                    {problem.title}
+                  </h3>
+                  <p className="text-text-secondary leading-relaxed">
+                    {problem.description}
+                  </p>
+                </div>
+              </div>
             </div>
           ))}
         </div>

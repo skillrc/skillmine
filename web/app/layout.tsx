@@ -1,10 +1,18 @@
+import type { Metadata } from 'next'
+import { GeistSans } from 'geist/font/sans'
+import { JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 
-export const metadata = {
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains-mono',
+  display: 'swap',
+})
+
+export const metadata: Metadata = {
   title: 'Skillmine - Public Alpha Skill Lifecycle for AI Skills',
   description: 'Public alpha for create, register, install, sync, and doctor workflows across Claude Code and OpenCode.',
   keywords: ['skillmine', 'AI skills', 'skill lifecycle', 'claude code', 'opencode', 'AI coding assistant', 'public alpha'],
-  metadataBase: new URL('https://skillmine-app.vercel.app'),
   authors: [{ name: 'Skillmine' }],
   openGraph: {
     title: 'Skillmine - Public Alpha Skill Lifecycle for AI Skills',
@@ -19,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${GeistSans.variable} ${jetbrainsMono.variable}`}>
       <body className="antialiased">
         {children}
       </body>
