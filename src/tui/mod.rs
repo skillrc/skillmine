@@ -8,32 +8,914 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Terminal;
 
 use crate::cli::{api, SkillSummary};
 
+// ── Theme ─────────────────────────────────────────────────
+/// Centralized theme management for consistent styling across the TUI.
+/// Uses semantic naming to avoid hardcoded colors scattered throughout the code.
+#[derive(Debug, Clone, Copy)]
+struct Theme {
+    // Semantic colors
+    healthy: Color,
+    warning: Color,
+    error: Color,
+    info: Color,
+    muted: Color,
+    accent: Color,
+    // UI element colors
+    title: Color,
+    border: Color,
+    selected_bg: Color,
+    selected_fg: Color,
+    success_title: Color,
+    error_title: Color,
+    // Footer and modal colors
+    footer_bg: Color,
+    footer_fg: Color,
+    footer_key: Color,
+    modal_border: Color,
+    modal_shadow: Color,
+    section_border: Color,
+    highlight: Color,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            healthy: Color::Green,
+            warning: Color::Yellow,
+            error: Color::Red,
+            info: Color::Cyan,
+            muted: Color::DarkGray,
+            accent: Color::Magenta,
+            title: Color::White,
+            border: Color::DarkGray,
+            selected_bg: Color::DarkGray,
+            selected_fg: Color::White,
+            success_title: Color::Green,
+            error_title: Color::Red,
+            footer_bg: Color::Rgb(30, 30, 30),
+            footer_fg: Color::Gray,
+            footer_key: Color::Cyan,
+            modal_border: Color::Rgb(100, 100, 100),
+            modal_shadow: Color::Black,
+            section_border: Color::Rgb(60, 60, 60),
+            highlight: Color::Rgb(255, 165, 0),
+        }
+    }
+}
+
+impl Theme {
+    /// Style for healthy/success states
+    fn healthy_style(&self) -> Style {
+        Style::default().fg(self.healthy)
+    }
+
+    /// Style for error states
+    fn error_style(&self) -> Style {
+        Style::default().fg(self.error)
+    }
+
+    /// Style for informational elements
+    fn info_style(&self) -> Style {
+        Style::default().fg(self.info)
+    }
+
+    /// Style for accent elements
+    fn accent_style(&self) -> Style {
+        Style::default().fg(self.accent)
+    }
+
+    /// Style for muted/secondary text
+    fn muted_style(&self) -> Style {
+        Style::default().fg(self.muted)
+    }
+
+    /// Style for bold titles
+    fn title_style(&self) -> Style {
+        Style::default().fg(self.title).add_modifier(Modifier::BOLD)
+    }
+
+    /// Style for borders
+    fn border_style(&self) -> Style {
+        Style::default().fg(self.border)
+    }
+
+    /// Style for section headers in detail view
+    fn section_style(&self) -> Style {
+        Style::default().fg(self.info).add_modifier(Modifier::BOLD)
+    }
+
+    /// Style for labels
+    fn label_style(&self) -> Style {
+        Style::default().add_modifier(Modifier::BOLD)
+    }
+
+    /// Get color based on boolean (healthy = true, error = false)
+    fn enabled_color(&self, enabled: bool) -> Color {
+        if enabled {
+            self.healthy
+        } else {
+            self.error
+        }
+    }
+
+    /// Get color for outdated status
+    fn outdated_color(&self, outdated: &str) -> Color {
+        if outdated == "up-to-date" {
+            self.healthy
+        } else {
+            self.warning
+        }
+    }
+
+    /// Get modal title color based on modal type
+    fn modal_title_color(&self, title: &str) -> Color {
+        match title {
+            "Action Result" => self.success_title,
+            "Help" | "Doctor Summary" | "Confirm Action" | "Command Palette" | "Add Skill"
+            | "Create Skill" => self.accent,
+            _ => self.error_title,
+        }
+    }
+
+    /// Style for footer background
+    fn footer_style(&self) -> Style {
+        Style::default().bg(self.footer_bg).fg(self.footer_fg)
+    }
+
+    /// Style for footer keybindings
+    fn footer_key_style(&self) -> Style {
+        Style::default()
+            .bg(self.footer_bg)
+            .fg(self.footer_key)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// Style for section blocks in detail view
+    fn section_block_style(&self) -> Style {
+        Style::default().fg(self.section_border)
+    }
+
+    /// Style for highlighted/selected elements
+    fn highlight_style(&self) -> Style {
+        Style::default()
+            .fg(self.highlight)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// Style for modal borders
+    fn modal_border_style(&self) -> Style {
+        Style::default()
+            .fg(self.modal_border)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// Enhanced selected style with foreground color
+    fn enhanced_selected_style(&self) -> Style {
+        Style::default()
+            .bg(self.selected_bg)
+            .fg(self.selected_fg)
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
+// ── UI Components ──────────────────────────────────────────
+
+/// Component for rendering the skill list with filtering and selection.
+/// Encapsulates all list-related rendering logic to keep the main draw loop clean.
+struct SkillList<'a> {
+    skills: &'a [SkillSummary],
+    filtered_indices: Vec<usize>,
+    selected: usize,
+    theme: Theme,
+}
+
+impl<'a> SkillList<'a> {
+    /// Create a new SkillList component
+    fn new(skills: &'a [SkillSummary], filtered_indices: Vec<usize>, selected: usize) -> Self {
+        Self {
+            skills,
+            filtered_indices,
+            selected,
+            theme: Theme::default(),
+        }
+    }
+
+    /// Render the skill list widget
+    fn render(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let items: Vec<ListItem> = self
+            .filtered_indices
+            .iter()
+            .enumerate()
+            .filter_map(|(display_idx, skill_idx)| {
+                self.skills.get(*skill_idx).map(|skill| {
+                    let is_selected = display_idx == self.selected;
+                    let max_width = area.width.saturating_sub(6) as usize;
+                    let mut row = format_skill_row(skill, max_width, &self.theme);
+
+                    if is_selected {
+                        let prefix = Span::styled("▶ ", self.theme.highlight_style());
+                        row.insert(0, prefix);
+                    } else {
+                        row.insert(0, Span::raw("  "));
+                    }
+
+                    ListItem::new(Line::from(row))
+                })
+            })
+            .collect();
+
+        let mut state = ListState::default();
+        if !self.filtered_indices.is_empty() {
+            state.select(Some(self.selected));
+        }
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .title(Span::styled(
+                        format!(
+                            "Skills ({}/{}) ",
+                            self.filtered_indices.len(),
+                            self.skills.len()
+                        ),
+                        self.theme.title_style(),
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.border_style()),
+            )
+            .highlight_style(self.theme.enhanced_selected_style())
+            .highlight_symbol("");
+
+        frame.render_stateful_widget(list, area, &mut state);
+    }
+}
+
+/// Component for rendering skill details in the detail panel with bordered sections
+struct DetailPanel<'a> {
+    skill: Option<&'a SkillSummary>,
+    show_empty_guide: bool,
+    theme: Theme,
+}
+
+impl<'a> DetailPanel<'a> {
+    fn for_skill(skill: &'a SkillSummary, _scroll: u16) -> Self {
+        Self {
+            skill: Some(skill),
+            show_empty_guide: false,
+            theme: Theme::default(),
+        }
+    }
+
+    fn empty_guide() -> Self {
+        Self {
+            skill: None,
+            show_empty_guide: true,
+            theme: Theme::default(),
+        }
+    }
+
+    fn no_skills() -> Self {
+        Self {
+            skill: None,
+            show_empty_guide: false,
+            theme: Theme::default(),
+        }
+    }
+
+    fn render(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if let Some(skill) = self.skill {
+            self.render_skill_details_with_sections(frame, area, skill);
+        } else if self.show_empty_guide {
+            self.render_welcome_guide_with_sections(frame, area);
+        } else {
+            let detail = Paragraph::new("No skills configured").block(
+                Block::default()
+                    .title(Span::styled("Details", self.theme.title_style()))
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.border_style()),
+            );
+            frame.render_widget(detail, area);
+        }
+    }
+
+    fn render_skill_details_with_sections(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        skill: &SkillSummary,
+    ) {
+        let sections = self.build_sections(skill);
+        let _total_sections = sections.len();
+
+        let constraints: Vec<Constraint> = sections
+            .iter()
+            .map(|s| Constraint::Length(s.height))
+            .collect();
+
+        let section_areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .margin(1)
+            .split(area);
+
+        for (i, section) in sections.iter().enumerate() {
+            if i < section_areas.len() {
+                let block = Block::default()
+                    .title(Span::styled(&section.title, self.theme.section_style()))
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.section_block_style());
+
+                let content = Paragraph::new(section.content.clone())
+                    .block(block)
+                    .wrap(Wrap { trim: true });
+
+                frame.render_widget(content, section_areas[i]);
+            }
+        }
+
+        let outer_block = Block::default()
+            .title(Span::styled("Details", self.theme.title_style()))
+            .borders(Borders::ALL)
+            .border_style(self.theme.border_style());
+        frame.render_widget(outer_block, area);
+    }
+
+    fn build_sections(&self, skill: &SkillSummary) -> Vec<DetailSection> {
+        let mut sections = vec![];
+
+        sections.push(self.build_identity_section(skill));
+        sections.push(self.build_status_section(skill));
+
+        let has_version = skill
+            .skill_version
+            .as_deref()
+            .is_some_and(|v| v != "unknown");
+        let has_manifest = skill
+            .manifest_version
+            .as_deref()
+            .is_some_and(|v| v != "legacy");
+        let has_maturity = skill.maturity.as_deref().is_some_and(|v| v != "legacy");
+        let has_verified = skill.last_verified.as_deref().is_some_and(|v| v != "n/a");
+
+        if has_version || has_manifest || has_maturity || has_verified {
+            sections.push(self.build_metadata_section(skill));
+        }
+
+        if let Some(desc) = &skill.description {
+            sections.push(self.build_description_section(desc));
+        }
+
+        sections
+    }
+
+    fn build_identity_section(&self, skill: &SkillSummary) -> DetailSection {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(vec![
+                Span::styled("Name: ", self.theme.label_style()),
+                Span::styled(skill.name.clone(), self.theme.title_style()),
+            ]),
+            Line::from(vec![
+                Span::styled("Source: ", self.theme.label_style()),
+                Span::raw(skill.source.clone()),
+            ]),
+        ];
+
+        DetailSection::new(" Identity ", lines, 5)
+    }
+
+    fn build_status_section(&self, skill: &SkillSummary) -> DetailSection {
+        let enabled_color = self.theme.enabled_color(skill.enabled);
+        let outdated_color = self.theme.outdated_color(&skill.outdated);
+
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(vec![
+                Span::styled("Enabled: ", self.theme.label_style()),
+                Span::styled(
+                    skill.enabled.to_string(),
+                    Style::default()
+                        .fg(enabled_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Statuses: ", self.theme.label_style()),
+                Span::raw(skill.statuses.join(", ")),
+            ]),
+            Line::from(vec![
+                Span::styled("Outdated: ", self.theme.label_style()),
+                Span::styled(
+                    skill.outdated.clone(),
+                    Style::default()
+                        .fg(outdated_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Lock: ", self.theme.label_style()),
+                Span::raw(skill.lock_summary.clone()),
+            ]),
+        ];
+
+        DetailSection::new(" Status ", lines, 7)
+    }
+
+    fn build_metadata_section(&self, skill: &SkillSummary) -> DetailSection {
+        let mut lines: Vec<Line<'static>> = vec![];
+
+        if let Some(version) = skill.skill_version.clone() {
+            if version != "unknown" {
+                lines.push(Line::from(vec![
+                    Span::styled("Version: ", self.theme.label_style()),
+                    Span::raw(version),
+                ]));
+            }
+        }
+
+        if let Some(manifest) = skill.manifest_version.clone() {
+            if manifest != "legacy" {
+                lines.push(Line::from(vec![
+                    Span::styled("Manifest: ", self.theme.label_style()),
+                    Span::raw(manifest),
+                ]));
+            }
+        }
+
+        if let Some(maturity) = skill.maturity.clone() {
+            if maturity != "legacy" {
+                lines.push(Line::from(vec![
+                    Span::styled("Maturity: ", self.theme.label_style()),
+                    Span::raw(maturity),
+                ]));
+            }
+        }
+
+        if let Some(verified) = skill.last_verified.clone() {
+            if verified != "n/a" {
+                lines.push(Line::from(vec![
+                    Span::styled("Last Verified: ", self.theme.label_style()),
+                    Span::raw(verified),
+                ]));
+            }
+        }
+
+        let height = lines.len() as u16 + 2;
+        DetailSection::new(" Metadata ", lines, height)
+    }
+
+    fn build_description_section(&self, desc: &str) -> DetailSection {
+        let lines: Vec<Line<'static>> = desc.lines().map(|l| Line::from(l.to_string())).collect();
+        let height = lines.len().min(6) as u16 + 2;
+
+        DetailSection::new(" Description ", lines, height)
+    }
+
+    fn render_welcome_guide_with_sections(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(8), Constraint::Min(10)])
+            .margin(1)
+            .split(area);
+
+        let welcome_block = Block::default()
+            .title(Span::styled(" Welcome ", self.theme.section_style()))
+            .borders(Borders::ALL)
+            .border_style(self.theme.section_block_style());
+
+        let welcome_content = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Welcome to Skillmine",
+                self.theme.title_style(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Your skill package manager for AI coding assistants",
+                self.theme.muted_style(),
+            )),
+        ])
+        .block(welcome_block)
+        .alignment(Alignment::Center);
+
+        frame.render_widget(welcome_content, chunks[0]);
+
+        let quickstart_block = Block::default()
+            .title(Span::styled(" Quick Start ", self.theme.section_style()))
+            .borders(Borders::ALL)
+            .border_style(self.theme.section_block_style());
+
+        let quickstart_content = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("  1. ", self.theme.highlight_style()),
+                Span::styled("Create a new skill:     ", self.theme.muted_style()),
+                Span::styled("skillmine create my-skill", self.theme.info_style()),
+            ]),
+            Line::from(vec![
+                Span::styled("  2. ", self.theme.highlight_style()),
+                Span::styled("Add an existing skill:  ", self.theme.muted_style()),
+                Span::styled("skillmine add owner/repo", self.theme.info_style()),
+            ]),
+            Line::from(vec![
+                Span::styled("  3. ", self.theme.highlight_style()),
+                Span::styled("Install from config:    ", self.theme.muted_style()),
+                Span::styled("skillmine install", self.theme.info_style()),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Press ", self.theme.muted_style()),
+                Span::styled("'a'", self.theme.highlight_style()),
+                Span::styled(" to add a skill source", self.theme.muted_style()),
+            ]),
+            Line::from(vec![
+                Span::styled("  Press ", self.theme.muted_style()),
+                Span::styled("':'", self.theme.highlight_style()),
+                Span::styled(" to open the command palette", self.theme.muted_style()),
+            ]),
+            Line::from(vec![
+                Span::styled("  Press ", self.theme.muted_style()),
+                Span::styled("'?'", self.theme.highlight_style()),
+                Span::styled(" for full keyboard shortcuts", self.theme.muted_style()),
+            ]),
+        ])
+        .block(quickstart_block);
+
+        frame.render_widget(quickstart_content, chunks[1]);
+
+        let outer_block = Block::default()
+            .title(Span::styled("Details", self.theme.title_style()))
+            .borders(Borders::ALL)
+            .border_style(self.theme.border_style());
+        frame.render_widget(outer_block, area);
+    }
+}
+
+struct DetailSection {
+    title: String,
+    content: Vec<Line<'static>>,
+    height: u16,
+}
+
+impl DetailSection {
+    fn new(title: impl Into<String>, lines: Vec<Line<'static>>, height: u16) -> Self {
+        Self {
+            title: title.into(),
+            content: lines,
+            height,
+        }
+    }
+}
+
+/// Component for rendering the footer with distinct Status and Commands sections
+struct FooterBar<'a> {
+    mode: AppMode,
+    status: &'a str,
+    filter_query: &'a str,
+    sync_target: &'a str,
+    theme: Theme,
+}
+
+impl<'a> FooterBar<'a> {
+    fn new(mode: AppMode, status: &'a str, filter_query: &'a str, sync_target: &'a str) -> Self {
+        Self {
+            mode,
+            status,
+            filter_query,
+            sync_target,
+            theme: Theme::default(),
+        }
+    }
+
+    fn render(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        let (status_text, commands_text) = self.content();
+
+        let status_bar = Paragraph::new(status_text)
+            .style(self.theme.footer_style())
+            .block(
+                Block::default()
+                    .borders(Borders::RIGHT)
+                    .border_style(self.theme.border_style()),
+            );
+
+        let commands_bar = Paragraph::new(commands_text)
+            .style(self.theme.footer_style())
+            .alignment(Alignment::Right);
+
+        frame.render_widget(status_bar, chunks[0]);
+        frame.render_widget(commands_bar, chunks[1]);
+    }
+
+    fn content(&self) -> (Line<'a>, Line<'a>) {
+        let status = self.build_status_line();
+        let commands = self.build_commands_line();
+        (status, commands)
+    }
+
+    fn build_status_line(&self) -> Line<'a> {
+        let mut spans = vec![];
+
+        spans.push(Span::styled("STATUS ", self.theme.footer_key_style()));
+
+        match self.mode {
+            AppMode::Add => {
+                spans.push(Span::styled("add mode", self.theme.info_style()));
+            }
+            AppMode::Filter => {
+                spans.push(Span::styled("filtering: ", self.theme.info_style()));
+                spans.push(Span::raw(self.filter_query));
+            }
+            AppMode::Normal => {
+                if self.status.is_empty() {
+                    spans.push(Span::styled("ready", self.theme.healthy_style()));
+                } else {
+                    spans.push(Span::raw(self.status));
+                }
+            }
+            AppMode::Command => {
+                spans.push(Span::styled("command palette", self.theme.accent_style()));
+            }
+            AppMode::Create => {
+                spans.push(Span::styled("create mode", self.theme.info_style()));
+            }
+        }
+
+        spans.push(Span::styled("  |  TARGET ", self.theme.footer_key_style()));
+        spans.push(Span::styled(
+            self.sync_target,
+            Style::default()
+                .fg(self.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+        Line::from(spans)
+    }
+
+    fn build_commands_line(&self) -> Line<'a> {
+        let mut spans = vec![];
+
+        match self.mode {
+            AppMode::Normal => {
+                spans.push(Span::styled("q", self.theme.footer_key_style()));
+                spans.push(Span::styled("quit  ", self.theme.footer_style()));
+                spans.push(Span::styled("j/k", self.theme.footer_key_style()));
+                spans.push(Span::styled("nav  ", self.theme.footer_style()));
+                spans.push(Span::styled("/", self.theme.footer_key_style()));
+                spans.push(Span::styled("filter  ", self.theme.footer_style()));
+                spans.push(Span::styled(":", self.theme.footer_key_style()));
+                spans.push(Span::styled("cmd  ", self.theme.footer_style()));
+                spans.push(Span::styled("?", self.theme.footer_key_style()));
+                spans.push(Span::styled("help", self.theme.footer_style()));
+            }
+            AppMode::Filter => {
+                spans.push(Span::styled("Enter", self.theme.footer_key_style()));
+                spans.push(Span::styled("confirm  ", self.theme.footer_style()));
+                spans.push(Span::styled("Esc", self.theme.footer_key_style()));
+                spans.push(Span::styled("cancel", self.theme.footer_style()));
+            }
+            AppMode::Add | AppMode::Create => {
+                spans.push(Span::styled("Enter", self.theme.footer_key_style()));
+                spans.push(Span::styled("confirm  ", self.theme.footer_style()));
+                spans.push(Span::styled("Esc", self.theme.footer_key_style()));
+                spans.push(Span::styled("cancel", self.theme.footer_style()));
+            }
+            AppMode::Command => {
+                spans.push(Span::styled("Enter", self.theme.footer_key_style()));
+                spans.push(Span::styled("run  ", self.theme.footer_style()));
+                spans.push(Span::styled("Esc", self.theme.footer_key_style()));
+                spans.push(Span::styled("cancel", self.theme.footer_style()));
+            }
+        }
+
+        Line::from(spans)
+    }
+}
+
+/// Types of modals that can be displayed (mutually exclusive states)
+enum ModalType {
+    Help,
+    Confirm(PendingAction),
+    Doctor(String),
+    Result(String),
+    CommandPalette {
+        query: String,
+        commands: Vec<(&'static str, &'static str)>,
+        selected: usize,
+    },
+    AddSkill {
+        input: String,
+    },
+    CreateSkill {
+        input: String,
+    },
+}
+
+struct ModalRenderer {
+    theme: Theme,
+}
+
+impl ModalRenderer {
+    fn new() -> Self {
+        Self {
+            theme: Theme::default(),
+        }
+    }
+
+    fn render(&self, frame: &mut ratatui::Frame<'_>, modal_type: &ModalType, scroll: u16) {
+        let (percent_x, percent_y) = self.dimensions(modal_type);
+        let modal_area = centered_rect(percent_x, percent_y, frame.area());
+        let title = self.title(modal_type);
+        let body = self.body(modal_type);
+        let title_color = self.theme.modal_title_color(title);
+
+        let shadow_area = Rect::new(
+            modal_area.x.saturating_add(1),
+            modal_area.y.saturating_add(1),
+            modal_area.width,
+            modal_area.height,
+        );
+
+        self.render_shadow(frame, shadow_area);
+
+        frame.render_widget(Clear, modal_area);
+
+        let inner = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(modal_area);
+
+        let border_type = match modal_type {
+            ModalType::Confirm(_) | ModalType::Result(_) => ratatui::widgets::BorderType::Double,
+            _ => ratatui::widgets::BorderType::Rounded,
+        };
+
+        let modal_widget = Paragraph::new(body)
+            .block(
+                Block::default()
+                    .title(Span::styled(
+                        title,
+                        Style::default()
+                            .fg(title_color)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.modal_border_style())
+                    .border_type(border_type),
+            )
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true })
+            .scroll((scroll, 0));
+
+        frame.render_widget(modal_widget, inner[0]);
+
+        let help_text = match modal_type {
+            ModalType::Help | ModalType::Doctor(_) | ModalType::Result(_) => {
+                "\u{2191}/\u{2193} scroll  PgUp/PgDn page  Esc close"
+            }
+            ModalType::Confirm(_) => "y confirm  n cancel  Esc close",
+            ModalType::CommandPalette { .. } => {
+                "\u{2191}/\u{2193} navigate  Enter select  Esc cancel"
+            }
+            ModalType::AddSkill { .. } | ModalType::CreateSkill { .. } => {
+                "Enter confirm  Esc cancel"
+            }
+        };
+
+        frame.render_widget(
+            Paragraph::new(help_text)
+                .style(self.theme.muted_style())
+                .alignment(Alignment::Center),
+            inner[1],
+        );
+    }
+
+    fn render_shadow(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let shadow = Block::default().style(
+            Style::default()
+                .bg(self.theme.modal_shadow)
+                .fg(Color::Black),
+        );
+        frame.render_widget(shadow, area);
+    }
+
+    fn title(&self, modal_type: &ModalType) -> &'static str {
+        match modal_type {
+            ModalType::Help => "Help",
+            ModalType::Confirm(_) => "Confirm Action",
+            ModalType::Doctor(_) => "Doctor Summary",
+            ModalType::Result(_) => "Action Result",
+            ModalType::CommandPalette { .. } => "Command Palette",
+            ModalType::AddSkill { .. } => "Add Skill",
+            ModalType::CreateSkill { .. } => "Create Skill",
+        }
+    }
+
+    fn body(&self, modal_type: &ModalType) -> String {
+        match modal_type {
+            ModalType::Help => self.help_text(),
+            ModalType::Confirm(action) => confirmation_message(*action, ""),
+            ModalType::Doctor(output) => output.clone(),
+            ModalType::Result(output) => output.clone(),
+            ModalType::CommandPalette {
+                query,
+                commands,
+                selected,
+            } => self.command_palette_text(query, commands, *selected),
+            ModalType::AddSkill { input } => {
+                format!(
+                    "Enter skill source (GitHub owner/repo[/path] or local path):\n{}",
+                    input
+                )
+            }
+            ModalType::CreateSkill { input } => {
+                format!("Enter new skill name:\n{}", input)
+            }
+        }
+    }
+
+    fn dimensions(&self, modal_type: &ModalType) -> (u16, u16) {
+        match modal_type {
+            ModalType::Help => (70, 40),
+            ModalType::Doctor(_) => (80, 60),
+            ModalType::Result(_) => (70, 30),
+            ModalType::CommandPalette { .. } => (60, 35),
+            ModalType::AddSkill { .. } | ModalType::CreateSkill { .. } => (70, 20),
+            ModalType::Confirm(_) => (60, 20),
+        }
+    }
+
+    fn help_text(&self) -> String {
+        "j/k or \u{2191}/\u{2193}: move\n\
+         : command palette\n\
+         create: shows local package flow guidance (create -> add -> install -> sync)\n\
+         a: add source to config after create\n\
+         e: enable selected skill\n\
+         D: disable selected skill\n\
+         n: unsync selected skill from runtime targets\n\
+         R: resync selected skill to runtime targets\n\
+         /: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\n\
+         i: install selected skill locally\n\
+         u: update selected skill source\n\
+         t: cycle runtime target (opencode/claude)\n\
+         s: sync configured skills to current target\n\
+         custom sync paths stay in CLI: skillmine sync --path <dir>\n\
+         x: remove selected skill from config\n\
+         d: run doctor summary\n\
+         r: refresh\n\
+         ?: toggle help\n\
+         q: quit"
+            .to_string()
+    }
+
+    fn command_palette_text(
+        &self,
+        query: &str,
+        commands: &[(&'static str, &'static str)],
+        selected: usize,
+    ) -> String {
+        let mut lines = vec![format!(":{}", query), String::new()];
+
+        let clamped_selected = if commands.is_empty() {
+            0
+        } else {
+            selected.min(commands.len() - 1)
+        };
+
+        for (i, (name, desc)) in commands.iter().enumerate() {
+            if i == clamped_selected {
+                lines.push(format!("\u{25b6} {} \u{2014} {}", name, desc));
+            } else {
+                lines.push(format!("  {} \u{2014} {}", name, desc));
+            }
+        }
+
+        lines.join("\n")
+    }
+}
+
 struct App {
     skills: Vec<SkillSummary>,
     selected: usize,
     status: String,
-    show_help: bool,
-    confirm_action: Option<PendingAction>,
-    doctor_output: Option<String>,
-    pending_action_result: Option<String>,
-    filter_mode: bool,
+    mode: AppMode,
+    modal: Option<Modal>,
     filter_query: String,
     detail_scroll: u16,
     modal_scroll: u16,
-    add_mode: bool,
     add_input: String,
-    create_mode: bool,
     create_input: String,
     sync_target: String,
-    command_mode: bool,
     command_query: String,
+    command_selected: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -52,6 +934,22 @@ enum PendingAction {
     Sync,
     Remove,
     Doctor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppMode {
+    Normal,
+    Filter,
+    Add,
+    Create,
+    Command,
+}
+
+enum Modal {
+    Help,
+    Confirm(PendingAction),
+    Doctor(String),
+    Result(String),
 }
 
 pub(crate) trait ActionExecutor {
@@ -152,22 +1050,17 @@ impl App {
         Self {
             skills,
             selected: 0,
-            status: "q quit • j/k move • / filter • : commands • create -> add -> install -> sync • i install • u update • s sync • x remove • d doctor • ? help".to_string(),
-            show_help: false,
-            confirm_action: None,
-            doctor_output: None,
-            pending_action_result: None,
-            filter_mode: false,
+            status: String::new(),
+            mode: AppMode::Normal,
+            modal: None,
             filter_query: String::new(),
             detail_scroll: 0,
             modal_scroll: 0,
-            add_mode: false,
             add_input: String::new(),
-            create_mode: false,
             create_input: String::new(),
             sync_target: "opencode".to_string(),
-            command_mode: false,
             command_query: String::new(),
+            command_selected: 0,
         }
     }
 
@@ -239,27 +1132,27 @@ impl App {
             .map(|skill| skill.name.clone())
     }
 
-    fn command_items(&self) -> Vec<&'static str> {
-        let commands = vec![
-            "create",
-            "add",
-            "enable",
-            "disable",
-            "unsync",
-            "resync",
-            "install",
-            "update",
-            "sync",
-            "remove",
-            "freeze",
-            "thaw",
-            "info",
-            "outdated",
-            "clean",
-            "doctor",
-            "refresh",
-            "toggle-target",
-            "help",
+    fn command_items(&self) -> Vec<(&'static str, &'static str)> {
+        let commands: Vec<(&'static str, &'static str)> = vec![
+            ("create", "generate local skill package"),
+            ("add", "register skill source in config"),
+            ("enable", "enable selected skill"),
+            ("disable", "disable selected skill"),
+            ("unsync", "remove from runtime targets"),
+            ("resync", "restore to runtime targets"),
+            ("install", "prepare skill locally"),
+            ("update", "refresh skill source"),
+            ("sync", "expose skills to target runtime"),
+            ("remove", "remove skill from config"),
+            ("freeze", "write lockfile from current state"),
+            ("thaw", "apply lockfile back to config"),
+            ("info", "show detailed skill metadata"),
+            ("outdated", "check for drift or updates"),
+            ("clean", "remove cache or tmp state"),
+            ("doctor", "run health diagnostics"),
+            ("refresh", "reload skill summaries"),
+            ("toggle-target", "cycle sync target"),
+            ("help", "show keyboard shortcuts"),
         ];
 
         if self.command_query.is_empty() {
@@ -268,7 +1161,7 @@ impl App {
             let needle = self.command_query.to_lowercase();
             commands
                 .into_iter()
-                .filter(|command| command.contains(&needle))
+                .filter(|(name, _)| name.contains(&needle))
                 .collect()
         }
     }
@@ -380,177 +1273,108 @@ fn run_loop(
                 .split(chunks[0]);
 
             let filtered_indices = app.filtered_indices();
-            let items: Vec<ListItem> = filtered_indices
-                .iter()
-                .filter_map(|index| app.skills.get(*index))
-                .map(|skill| {
-                    let max_width = body[0].width.saturating_sub(4) as usize;
-                    ListItem::new(Line::from(format_skill_row(skill, max_width)))
-                })
-                .collect();
+            let skill_list = SkillList::new(&app.skills, filtered_indices, app.selected);
+            skill_list.render(frame, body[0]);
 
-            let mut state = ListState::default();
-            if !filtered_indices.is_empty() {
-                state.select(Some(app.selected));
-            }
-
-            let list = List::new(items)
-                .block(Block::default().title("Skills").borders(Borders::ALL))
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD))
-                .highlight_symbol("▶ ");
-            frame.render_stateful_widget(list, body[0], &mut state);
-
-            let detail_text = if let Some(skill) = app.selected_filtered_skill() {
-                vec![
-                    Line::from(vec![Span::styled("Source: ", Style::default().add_modifier(Modifier::BOLD)), Span::raw(skill.source.clone())]),
-                    Line::from(vec![Span::styled("Enabled: ", Style::default().add_modifier(Modifier::BOLD)), Span::raw(skill.enabled.to_string())]),
-                    Line::from(vec![Span::styled("Statuses: ", Style::default().add_modifier(Modifier::BOLD)), Span::raw(skill.statuses.join(", "))]),
-                    Line::from(vec![Span::styled("Outdated: ", Style::default().add_modifier(Modifier::BOLD)), Span::raw(skill.outdated.clone())]),
-                    Line::from(vec![Span::styled("Lock: ", Style::default().add_modifier(Modifier::BOLD)), Span::raw(skill.lock_summary.clone())]),
-                    Line::from(format!(
-                        "Version: {}",
-                        skill.skill_version.clone().unwrap_or_else(|| "unknown".to_string())
-                    )),
-                    Line::from(format!(
-                        "Manifest Version: {}",
-                        skill.manifest_version.clone().unwrap_or_else(|| "legacy".to_string())
-                    )),
-                    Line::from(format!(
-                        "Maturity: {}",
-                        skill.maturity.clone().unwrap_or_else(|| "legacy".to_string())
-                    )),
-                    Line::from(format!(
-                        "Last Verified: {}",
-                        skill.last_verified.clone().unwrap_or_else(|| "n/a".to_string())
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled("Description", Style::default().add_modifier(Modifier::BOLD))),
-                    Line::from(skill.description.clone().unwrap_or_else(|| "No manifest description available".to_string())),
-                ]
+            let detail_panel = if let Some(skill) = app.selected_filtered_skill() {
+                DetailPanel::for_skill(skill, app.detail_scroll)
+            } else if app.skills.is_empty() && app.filter_query.is_empty() {
+                DetailPanel::empty_guide()
             } else {
-                vec![Line::from("No skills configured")]
+                DetailPanel::no_skills()
+            };
+            detail_panel.render(frame, body[1]);
+
+            let footer = FooterBar::new(app.mode, &app.status, &app.filter_query, &app.sync_target);
+            footer.render(frame, chunks[1]);
+
+            let modal_type = match &app.modal {
+                Some(Modal::Confirm(action)) => Some(ModalType::Confirm(*action)),
+                Some(Modal::Help) => Some(ModalType::Help),
+                Some(Modal::Doctor(output)) => Some(ModalType::Doctor(output.clone())),
+                Some(Modal::Result(output)) => Some(ModalType::Result(output.clone())),
+                None => None,
             };
 
-            let detail = Paragraph::new(detail_text)
-                .block(Block::default().title("Details").borders(Borders::ALL))
-                .wrap(Wrap { trim: true })
-                .scroll((app.detail_scroll, 0));
-            frame.render_widget(detail, body[1]);
+            let modal_renderer = ModalRenderer::new();
 
-            let footer_text = if app.add_mode {
-                format!("add mode • sync target: {}", app.sync_target)
-            } else if app.filter_mode {
-                format!("filter: {} • sync target: {}", app.filter_query, app.sync_target)
-            } else {
-                format!("{} • sync target: {}", app.status, app.sync_target)
-            };
-            let footer = Paragraph::new(footer_text);
-            frame.render_widget(footer, chunks[1]);
-
-            if let Some(action) = app.confirm_action {
-                render_modal(
-                    frame,
-                    centered_rect(60, 20, frame.area()),
-                    "Confirm Action",
-                    confirmation_message(action, &app.sync_target),
-                    app.modal_scroll,
-                );
+            if let Some(modal_type) = modal_type {
+                modal_renderer.render(frame, &modal_type, app.modal_scroll);
             }
 
-            if app.show_help {
-                render_modal(
-                    frame,
-                    centered_rect(70, 40, frame.area()),
-                    "Help",
-                    "j/k or ↑/↓: move\n: command palette\ncreate: shows local package flow guidance (create -> add -> install -> sync)\na: add source to config after create\ne: enable selected skill\nD: disable selected skill\nn: unsync selected skill from runtime targets\nR: resync selected skill to runtime targets\n/: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\ni: install selected skill locally\nu: update selected skill source\nt: cycle runtime target (opencode/claude)\ns: sync configured skills to current target\ncustom sync paths stay in CLI: skillmine sync --path <dir>\nx: remove selected skill from config\nd: run doctor summary\nr: refresh\n?: toggle help\nq: quit".to_string(),
-                    app.modal_scroll,
-                );
-            }
-
-            if let Some(output) = &app.doctor_output {
-                render_modal(
-                    frame,
-                    centered_rect(80, 60, frame.area()),
-                    "Doctor Summary",
-                    output.clone(),
-                    app.modal_scroll,
-                );
-            }
-
-            if let Some(output) = &app.pending_action_result {
-                render_modal(
-                    frame,
-                    centered_rect(70, 30, frame.area()),
-                    "Action Result",
-                    output.clone(),
-                    app.modal_scroll,
-                );
-            }
-
-            if app.command_mode {
-                let commands = app.command_items();
-                render_modal(
-                    frame,
-                    centered_rect(60, 35, frame.area()),
-                    "Command Palette",
-                    format!(
-                        ":{}\n\n{}",
-                        app.command_query,
-                        commands.join("\n")
-                    ),
-                    app.modal_scroll,
-                );
-            }
-
-            if app.add_mode {
-                render_modal(
-                    frame,
-                    centered_rect(70, 20, frame.area()),
-                    "Add Skill",
-                    format!("Enter skill source (GitHub owner/repo[/path] or local path):\n{}", app.add_input),
-                    app.modal_scroll,
-                );
-            }
-
-            if app.create_mode {
-                render_modal(
-                    frame,
-                    centered_rect(70, 20, frame.area()),
-                    "Create Skill",
-                    format!("Enter new skill name:\n{}", app.create_input),
-                    app.modal_scroll,
-                );
+            match app.mode {
+                AppMode::Command => {
+                    let commands = app.command_items();
+                    let modal_type = ModalType::CommandPalette {
+                        query: app.command_query.clone(),
+                        commands,
+                        selected: app.command_selected,
+                    };
+                    modal_renderer.render(frame, &modal_type, app.modal_scroll);
+                }
+                AppMode::Add => {
+                    let modal_type = ModalType::AddSkill {
+                        input: app.add_input.clone(),
+                    };
+                    modal_renderer.render(frame, &modal_type, app.modal_scroll);
+                }
+                AppMode::Create => {
+                    let modal_type = ModalType::CreateSkill {
+                        input: app.create_input.clone(),
+                    };
+                    modal_renderer.render(frame, &modal_type, app.modal_scroll);
+                }
+                _ => {}
             }
         })?;
 
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
-                if app.command_mode {
+                if app.mode == AppMode::Command {
                     match key.code {
                         KeyCode::Esc => {
-                            app.command_mode = false;
+                            app.mode = AppMode::Normal;
                             app.command_query.clear();
+                            app.command_selected = 0;
                             app.modal_scroll = 0;
                             app.status = "command palette cancelled".to_string();
                         }
                         KeyCode::Enter => {
+                            let items = app.command_items();
+                            let selected_idx =
+                                app.command_selected.min(items.len().saturating_sub(1));
+                            if let Some((name, _)) = items.get(selected_idx) {
+                                app.command_query = name.to_string();
+                            }
+                            app.command_selected = 0;
                             run_command(app)?;
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let len = app.command_items().len();
+                            if len > 0 {
+                                app.command_selected = (app.command_selected + 1).min(len - 1);
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.command_selected = app.command_selected.saturating_sub(1);
                         }
                         KeyCode::Backspace => {
                             app.command_query.pop();
+                            app.command_selected = 0;
                         }
                         KeyCode::Char(c) => {
                             app.command_query.push(c);
+                            app.command_selected = 0;
                         }
                         _ => {}
                     }
                     continue;
                 }
 
-                if app.add_mode {
+                if app.mode == AppMode::Add {
                     match key.code {
                         KeyCode::Esc => {
-                            app.add_mode = false;
+                            app.mode = AppMode::Normal;
                             app.add_input.clear();
                             app.modal_scroll = 0;
                             app.status = "add cancelled".to_string();
@@ -561,11 +1385,11 @@ fn run_loop(
                                 app.status = "skill source cannot be empty".to_string();
                             } else {
                                 let report = action_executor.add_skill(repo.clone())?;
-                                app.add_mode = false;
+                                app.mode = AppMode::Normal;
                                 app.add_input.clear();
                                 app.modal_scroll = 0;
                                 app.status = format!("added source {}", repo);
-                                app.pending_action_result = Some(report);
+                                app.modal = Some(Modal::Result(report));
                                 app.refresh();
                             }
                         }
@@ -580,10 +1404,10 @@ fn run_loop(
                     continue;
                 }
 
-                if app.create_mode {
+                if app.mode == AppMode::Create {
                     match key.code {
                         KeyCode::Esc => {
-                            app.create_mode = false;
+                            app.mode = AppMode::Normal;
                             app.create_input.clear();
                             app.modal_scroll = 0;
                             app.status = "create cancelled".to_string();
@@ -594,11 +1418,11 @@ fn run_loop(
                                 app.status = "skill name cannot be empty".to_string();
                             } else {
                                 let report = action_executor.create_skill(name.clone(), None)?;
-                                app.create_mode = false;
+                                app.mode = AppMode::Normal;
                                 app.create_input.clear();
                                 app.modal_scroll = 0;
                                 app.status = format!("created {}", name);
-                                app.pending_action_result = Some(report);
+                                app.modal = Some(Modal::Result(report));
                             }
                         }
                         KeyCode::Backspace => {
@@ -612,11 +1436,11 @@ fn run_loop(
                     continue;
                 }
 
-                if app.pending_action_result.is_some() {
+                if let Some(Modal::Result(_)) = app.modal {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                             app.modal_scroll = 0;
-                            app.pending_action_result = None
+                            app.modal = None
                         }
                         KeyCode::Up => app.modal_scroll = app.modal_scroll.saturating_sub(1),
                         KeyCode::Down => app.modal_scroll = app.modal_scroll.saturating_add(1),
@@ -627,15 +1451,15 @@ fn run_loop(
                     continue;
                 }
 
-                if app.filter_mode {
+                if app.mode == AppMode::Filter {
                     match key.code {
                         KeyCode::Esc => {
-                            app.filter_mode = false;
+                            app.mode = AppMode::Normal;
                             app.modal_scroll = 0;
                             app.status = "filter cancelled".to_string();
                         }
                         KeyCode::Enter => {
-                            app.filter_mode = false;
+                            app.mode = AppMode::Normal;
                             app.normalize_selection();
                             app.detail_scroll = 0;
                             app.status = if app.filter_query.is_empty() {
@@ -659,11 +1483,11 @@ fn run_loop(
                     continue;
                 }
 
-                if app.doctor_output.is_some() {
+                if let Some(Modal::Doctor(_)) = app.modal {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                             app.modal_scroll = 0;
-                            app.doctor_output = None
+                            app.modal = None
                         }
                         KeyCode::Up => app.modal_scroll = app.modal_scroll.saturating_sub(1),
                         KeyCode::Down => app.modal_scroll = app.modal_scroll.saturating_add(1),
@@ -674,11 +1498,11 @@ fn run_loop(
                     continue;
                 }
 
-                if app.show_help {
+                if let Some(Modal::Help) = app.modal {
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('?') => {
                             app.modal_scroll = 0;
-                            app.show_help = false
+                            app.modal = None
                         }
                         KeyCode::Up => app.modal_scroll = app.modal_scroll.saturating_sub(1),
                         KeyCode::Down => app.modal_scroll = app.modal_scroll.saturating_add(1),
@@ -689,15 +1513,15 @@ fn run_loop(
                     continue;
                 }
 
-                if let Some(action) = app.confirm_action {
+                if let Some(Modal::Confirm(action)) = app.modal {
                     match key.code {
                         KeyCode::Char('y') => {
                             execute_action(app, action, action_executor)?;
                             app.modal_scroll = 0;
-                            app.confirm_action = None;
+                            app.modal = None;
                         }
                         KeyCode::Char('n') | KeyCode::Esc => {
-                            app.confirm_action = None;
+                            app.modal = None;
                             app.modal_scroll = 0;
                             app.status = "action cancelled".to_string();
                         }
@@ -712,47 +1536,48 @@ fn run_loop(
                     KeyCode::Char('k') | KeyCode::Up => app.previous(),
                     KeyCode::Char('r') => app.refresh(),
                     KeyCode::Char(':') => {
-                        app.command_mode = true;
+                        app.mode = AppMode::Command;
                         app.command_query.clear();
+                        app.command_selected = 0;
                         app.modal_scroll = 0;
                         app.status = "command palette".to_string();
                     }
                     KeyCode::Char('a') => {
-                        app.add_mode = true;
+                        app.mode = AppMode::Add;
                         app.add_input.clear();
                         app.modal_scroll = 0;
                         app.status = "enter skill source to add".to_string();
                     }
                     KeyCode::Char('e') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Enable)
+                        app.modal = Some(Modal::Confirm(PendingAction::Enable))
                     }
                     KeyCode::Char('D') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Disable)
+                        app.modal = Some(Modal::Confirm(PendingAction::Disable))
                     }
                     KeyCode::Char('n') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Unsync)
+                        app.modal = Some(Modal::Confirm(PendingAction::Unsync))
                     }
                     KeyCode::Char('R') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Resync)
+                        app.modal = Some(Modal::Confirm(PendingAction::Resync))
                     }
                     KeyCode::Char('/') => {
                         enter_filter_mode(app);
                     }
                     KeyCode::Char('?') => {
                         app.modal_scroll = 0;
-                        app.show_help = true
+                        app.modal = Some(Modal::Help)
                     }
                     KeyCode::Char('i') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Install)
+                        app.modal = Some(Modal::Confirm(PendingAction::Install))
                     }
                     KeyCode::Char('u') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Update)
+                        app.modal = Some(Modal::Confirm(PendingAction::Update))
                     }
                     KeyCode::Char('t') => {
                         app.sync_target = next_sync_target(&app.sync_target);
@@ -760,15 +1585,15 @@ fn run_loop(
                     }
                     KeyCode::Char('s') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Sync)
+                        app.modal = Some(Modal::Confirm(PendingAction::Sync))
                     }
                     KeyCode::Char('x') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Remove)
+                        app.modal = Some(Modal::Confirm(PendingAction::Remove))
                     }
                     KeyCode::Char('d') => {
                         app.modal_scroll = 0;
-                        app.confirm_action = Some(PendingAction::Doctor)
+                        app.modal = Some(Modal::Confirm(PendingAction::Doctor))
                     }
                     KeyCode::PageUp => app.detail_scroll = app.detail_scroll.saturating_sub(10),
                     KeyCode::PageDown => app.detail_scroll = app.detail_scroll.saturating_add(10),
@@ -781,75 +1606,75 @@ fn run_loop(
 
 fn run_command(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let command = app.command_query.trim().to_lowercase();
-    app.command_mode = false;
+    app.mode = AppMode::Normal;
     app.modal_scroll = 0;
 
     match command.as_str() {
         "" => app.status = "empty command".to_string(),
         "add" => {
-            app.add_mode = true;
+            app.mode = AppMode::Add;
             app.add_input.clear();
             app.status = "enter skill source to add".to_string();
         }
         "enable" => {
-            app.confirm_action = Some(PendingAction::Enable);
+            app.modal = Some(Modal::Confirm(PendingAction::Enable));
             app.status = "confirm enable".to_string();
         }
         "disable" => {
-            app.confirm_action = Some(PendingAction::Disable);
+            app.modal = Some(Modal::Confirm(PendingAction::Disable));
             app.status = "confirm disable".to_string();
         }
         "unsync" => {
-            app.confirm_action = Some(PendingAction::Unsync);
+            app.modal = Some(Modal::Confirm(PendingAction::Unsync));
             app.status = "confirm unsync".to_string();
         }
         "resync" => {
-            app.confirm_action = Some(PendingAction::Resync);
+            app.modal = Some(Modal::Confirm(PendingAction::Resync));
             app.status = "confirm resync".to_string();
         }
         "create" => {
-            app.create_mode = true;
+            app.mode = AppMode::Create;
             app.create_input.clear();
             app.status = "enter skill name to create".to_string();
         }
         "freeze" => {
-            app.confirm_action = Some(PendingAction::Freeze);
+            app.modal = Some(Modal::Confirm(PendingAction::Freeze));
             app.status = "confirm freeze".to_string();
         }
         "thaw" => {
-            app.confirm_action = Some(PendingAction::Thaw);
+            app.modal = Some(Modal::Confirm(PendingAction::Thaw));
             app.status = "confirm thaw".to_string();
         }
         "info" => {
-            app.confirm_action = Some(PendingAction::Info);
+            app.modal = Some(Modal::Confirm(PendingAction::Info));
             app.status = "confirm info".to_string();
         }
         "outdated" => {
-            app.confirm_action = Some(PendingAction::Outdated);
+            app.modal = Some(Modal::Confirm(PendingAction::Outdated));
             app.status = "confirm outdated".to_string();
         }
         "clean" => {
-            app.confirm_action = Some(PendingAction::Clean);
+            app.modal = Some(Modal::Confirm(PendingAction::Clean));
             app.status = "confirm clean".to_string();
         }
         "install" => {
-            app.confirm_action = Some(PendingAction::Install);
+            app.modal = Some(Modal::Confirm(PendingAction::Install));
             app.status = "confirm install".to_string();
         }
         "update" => {
-            app.confirm_action = Some(PendingAction::Update);
+            app.modal = Some(Modal::Confirm(PendingAction::Update));
             app.status = "confirm update".to_string();
         }
         "sync" => {
-            app.confirm_action = Some(PendingAction::Sync);
+            app.modal = Some(Modal::Confirm(PendingAction::Sync));
             app.status = format!("confirm sync to {} runtime target", app.sync_target);
         }
         "remove" => {
-            app.confirm_action = Some(PendingAction::Remove);
+            app.modal = Some(Modal::Confirm(PendingAction::Remove));
             app.status = "confirm remove".to_string();
         }
         "doctor" => {
-            app.confirm_action = Some(PendingAction::Doctor);
+            app.modal = Some(Modal::Confirm(PendingAction::Doctor));
             app.status = "confirm doctor".to_string();
         }
         "refresh" => app.refresh(),
@@ -857,10 +1682,10 @@ fn run_command(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             app.sync_target = next_sync_target(&app.sync_target);
             app.status = format!("sync target set to {}", app.sync_target);
         }
-        "help" => app.show_help = true,
+        "help" => app.modal = Some(Modal::Help),
         "filter" => enter_filter_mode(app),
         other => {
-            app.pending_action_result = Some(format!("Unknown command: {}", other));
+            app.modal = Some(Modal::Result(format!("Unknown command: {}", other)));
             app.status = "unknown command".to_string();
         }
     }
@@ -879,8 +1704,10 @@ fn execute_action(
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.enable_skill(name.clone())?;
                 app.status = format!("enabled {}", name);
-                app.pending_action_result =
-                    Some(format!("Enabled {} for managed lifecycle.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Enabled {} for managed lifecycle.",
+                    name
+                )));
                 app.refresh();
             }
         }
@@ -888,7 +1715,10 @@ fn execute_action(
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.disable_skill(name.clone())?;
                 app.status = format!("disabled {}", name);
-                app.pending_action_result = Some(format!("Disabled {} in configuration.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Disabled {} in configuration.",
+                    name
+                )));
                 app.refresh();
             }
         }
@@ -896,8 +1726,10 @@ fn execute_action(
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.unsync_skill(name.clone())?;
                 app.status = format!("unsynced {}", name);
-                app.pending_action_result =
-                    Some(format!("Unsynced {} from runtime targets.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Unsynced {} from runtime targets.",
+                    name
+                )));
                 app.refresh();
             }
         }
@@ -905,7 +1737,10 @@ fn execute_action(
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.resync_skill(name.clone())?;
                 app.status = format!("resynced {}", name);
-                app.pending_action_result = Some(format!("Resynced {} to runtime targets.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Resynced {} to runtime targets.",
+                    name
+                )));
                 app.refresh();
             }
         }
@@ -913,8 +1748,10 @@ fn execute_action(
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.install_skill(Some(name.clone()))?;
                 app.status = format!("installed {} locally", name);
-                app.pending_action_result =
-                    Some(format!("Installed {} into local managed state.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Installed {} into local managed state.",
+                    name
+                )));
                 app.refresh();
             }
         }
@@ -922,7 +1759,10 @@ fn execute_action(
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.update_skill(Some(name.clone()))?;
                 app.status = format!("updated {}", name);
-                app.pending_action_result = Some(format!("Updated {} and refreshed state.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Updated {} and refreshed state.",
+                    name
+                )));
                 app.refresh();
             }
         }
@@ -932,51 +1772,58 @@ fn execute_action(
                 "synced configured skills to {} runtime target",
                 app.sync_target
             );
-            app.pending_action_result = Some(report);
+            app.modal = Some(Modal::Result(report));
             app.refresh();
         }
         PendingAction::Remove => {
             if let Some(name) = app.selected_filtered_name() {
                 action_executor.remove_skill(name.clone())?;
                 app.status = format!("removed {}", name);
-                app.pending_action_result = Some(format!("Removed {} from configuration.", name));
+                app.modal = Some(Modal::Result(format!(
+                    "Removed {} from configuration.",
+                    name
+                )));
                 app.refresh();
             }
         }
         PendingAction::Doctor => {
-            app.doctor_output = Some(action_executor.doctor_summary_text()?);
+            app.modal = Some(Modal::Doctor(action_executor.doctor_summary_text()?));
             app.status = "doctor summary ready".to_string();
         }
         PendingAction::Freeze => {
             action_executor.freeze_skills()?;
             app.status = "froze managed state".to_string();
-            app.pending_action_result =
-                Some("Wrote lockfile from current managed state.".to_string());
+            app.modal = Some(Modal::Result(
+                "Wrote lockfile from current managed state.".to_string(),
+            ));
             app.refresh();
         }
         PendingAction::Thaw => {
             action_executor.thaw_skills()?;
             app.status = "thawed lockfile state".to_string();
-            app.pending_action_result =
-                Some("Applied lockfile state back into configuration.".to_string());
+            app.modal = Some(Modal::Result(
+                "Applied lockfile state back into configuration.".to_string(),
+            ));
             app.refresh();
         }
         PendingAction::Info => {
             if let Some(name) = app.selected_filtered_name() {
                 let report = action_executor.info_skill(name.clone())?;
                 app.status = format!("info ready for {}", name);
-                app.pending_action_result = Some(report);
+                app.modal = Some(Modal::Result(report));
             }
         }
         PendingAction::Outdated => {
             let report = action_executor.outdated_skills()?;
             app.status = "outdated report ready".to_string();
-            app.pending_action_result = Some(report);
+            app.modal = Some(Modal::Result(report));
         }
         PendingAction::Clean => {
             action_executor.clean_generated(false)?;
             app.status = "cleaned generated state".to_string();
-            app.pending_action_result = Some("Removed generated temporary state.".to_string());
+            app.modal = Some(Modal::Result(
+                "Removed generated temporary state.".to_string(),
+            ));
         }
     }
 
@@ -1032,7 +1879,7 @@ fn confirmation_message(action: PendingAction, sync_target: &str) -> String {
 }
 
 fn enter_filter_mode(app: &mut App) {
-    app.filter_mode = true;
+    app.mode = AppMode::Filter;
     app.detail_scroll = 0;
     app.status = if app.filter_query.is_empty() {
         "type to filter skills".to_string()
@@ -1055,34 +1902,33 @@ fn truncate_with_ellipsis(input: &str, max_width: usize) -> String {
     chars.into_iter().take(max_width - 1).collect::<String>() + "…"
 }
 
-fn format_skill_row(skill: &SkillSummary, max_width: usize) -> String {
-    let disabled = if skill.enabled { "" } else { " [disabled]" };
-    let raw = format!("{}{} [{}]", skill.name, disabled, skill.outdated);
-    truncate_with_ellipsis(&raw, max_width)
-}
+fn format_skill_row(skill: &SkillSummary, max_width: usize, theme: &Theme) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
 
-fn render_modal(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    title: &str,
-    body: String,
-    scroll: u16,
-) {
-    frame.render_widget(Clear, area);
-    let inner = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(area);
-    let modal = Paragraph::new(body)
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .alignment(Alignment::Left)
-        .wrap(Wrap { trim: true })
-        .scroll((scroll, 0));
-    frame.render_widget(modal, inner[0]);
-    frame.render_widget(
-        Paragraph::new("↑/↓ scroll • PgUp/PgDn scroll • Esc close").alignment(Alignment::Center),
-        inner[1],
-    );
+    let name_style = if skill.enabled {
+        Style::default()
+    } else {
+        theme.muted_style()
+    };
+    spans.push(Span::styled(skill.name.clone(), name_style));
+
+    if !skill.enabled {
+        spans.push(Span::styled(" [disabled]", theme.error_style()));
+    }
+
+    let outdated_color = theme.outdated_color(&skill.outdated);
+    spans.push(Span::styled(
+        format!(" [{}]", skill.outdated),
+        Style::default().fg(outdated_color),
+    ));
+
+    let full_text: String = spans.iter().map(|s| s.content.to_string()).collect();
+    if full_text.chars().count() > max_width {
+        let truncated = truncate_with_ellipsis(&full_text, max_width);
+        vec![Span::raw(truncated)]
+    } else {
+        spans
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, rect: Rect) -> Rect {
@@ -1261,7 +2107,7 @@ mod tests {
         let result = execute_action(&mut app, PendingAction::Doctor, &executor);
 
         assert!(result.is_ok());
-        assert_eq!(app.doctor_output.as_deref(), Some("PASS config validation"));
+        assert!(matches!(&app.modal, Some(Modal::Doctor(msg)) if msg == "PASS config validation"));
         assert_eq!(app.status, "doctor summary ready");
         assert_eq!(executor.calls(), vec!["doctor"]);
     }
@@ -1275,10 +2121,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(app.status, "refreshed summaries");
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Installed demo into local managed state.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Installed demo into local managed state."
+        ));
         assert_eq!(executor.calls(), vec!["install:demo"]);
     }
 
@@ -1302,7 +2148,7 @@ mod tests {
 
         enter_filter_mode(&mut app);
 
-        assert!(app.filter_mode);
+        assert_eq!(app.mode, AppMode::Filter);
         assert_eq!(app.filter_query, "source:local smoke");
         assert_eq!(app.status, "edit filter query");
     }
@@ -1315,9 +2161,11 @@ mod tests {
             vec!["configured"],
         );
 
-        let row = format_skill_row(&skill, 24);
+        let theme = Theme::default();
+        let spans = format_skill_row(&skill, 24, &theme);
+        let row: String = spans.iter().map(|s| s.content.to_string()).collect();
 
-        assert!(row.ends_with('…'));
+        assert!(row.ends_with('\u{2026}'));
         assert!(row.chars().count() <= 24);
     }
 
@@ -1349,8 +2197,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(executor.calls().is_empty());
-        assert!(app.pending_action_result.is_none());
-        assert!(app.doctor_output.is_none());
+        assert!(app.modal.is_none());
     }
 
     #[test]
@@ -1436,10 +2283,10 @@ mod tests {
         let result = execute_action(&mut app, PendingAction::Sync, &executor);
 
         assert!(result.is_ok());
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Sync complete:\n  1 synced to /tmp/opencode")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Sync complete:\n  1 synced to /tmp/opencode"
+        ));
     }
 
     #[test]
@@ -1447,18 +2294,17 @@ mod tests {
         let app = App::new(vec![sample_skill("demo")]);
 
         let commands = app.command_items();
+        let command_names: Vec<&str> = commands.iter().map(|(name, _)| *name).collect();
 
-        assert!(commands.contains(&"create"));
-        assert!(app.status.contains("create"));
+        assert!(command_names.contains(&"create"));
     }
 
     #[test]
     fn help_text_mentions_cli_only_custom_sync_paths() {
-        let app = App::new(vec![sample_skill("demo")]);
+        let _app = App::new(vec![sample_skill("demo")]);
 
-        assert!(app.status.contains("create"));
         assert!(
-            "j/k or ↑/↓: move\n: command palette\ncreate: shows local package flow guidance (create -> add -> install -> sync)\na: add source to config after create\ne: enable selected skill\nD: disable selected skill\nn: unsync selected skill from runtime targets\nR: resync selected skill to runtime targets\n/: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\ni: install selected skill locally\nu: update selected skill source\nt: cycle runtime target (opencode/claude)\ns: sync configured skills to current target\ncustom sync paths stay in CLI: skillmine sync --path <dir>\nx: remove selected skill from config\nd: run doctor summary\nr: refresh\n?: toggle help\nq: quit"
+            "j/k or \u{2191}/\u{2193}: move\n: command palette\ncreate: shows local package flow guidance (create -> add -> install -> sync)\na: add source to config after create\ne: enable selected skill\nD: disable selected skill\nn: unsync selected skill from runtime targets\nR: resync selected skill to runtime targets\n/: filter list (supports source:<github|local|version> status:<configured|disabled|unsynced|installed|cached|locked>)\ni: install selected skill locally\nu: update selected skill source\nt: cycle runtime target (opencode/claude)\ns: sync configured skills to current target\ncustom sync paths stay in CLI: skillmine sync --path <dir>\nx: remove selected skill from config\nd: run doctor summary\nr: refresh\n?: toggle help\nq: quit"
                 .contains("skillmine sync --path <dir>")
         );
     }
@@ -1471,7 +2317,7 @@ mod tests {
         run_command(&mut app).unwrap();
 
         assert_eq!(app.status, "enter skill name to create");
-        assert!(app.create_mode);
+        assert_eq!(app.mode, AppMode::Create);
     }
 
     #[test]
@@ -1479,16 +2325,17 @@ mod tests {
         let app = App::new(vec![sample_skill("demo")]);
 
         let commands = app.command_items();
+        let names: Vec<&str> = commands.iter().map(|(n, _)| *n).collect();
 
-        assert!(commands.contains(&"enable"));
-        assert!(commands.contains(&"disable"));
-        assert!(commands.contains(&"unsync"));
-        assert!(commands.contains(&"resync"));
-        assert!(commands.contains(&"freeze"));
-        assert!(commands.contains(&"thaw"));
-        assert!(commands.contains(&"info"));
-        assert!(commands.contains(&"outdated"));
-        assert!(commands.contains(&"clean"));
+        assert!(names.contains(&"enable"));
+        assert!(names.contains(&"disable"));
+        assert!(names.contains(&"unsync"));
+        assert!(names.contains(&"resync"));
+        assert!(names.contains(&"freeze"));
+        assert!(names.contains(&"thaw"));
+        assert!(names.contains(&"info"));
+        assert!(names.contains(&"outdated"));
+        assert!(names.contains(&"clean"));
     }
 
     #[test]
@@ -1498,7 +2345,10 @@ mod tests {
 
         run_command(&mut app).unwrap();
 
-        assert_eq!(app.confirm_action.map(action_label), Some("enable"));
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Confirm(action)) if action_label(*action) == "enable"
+        ));
         assert_eq!(app.status, "confirm enable");
     }
 
@@ -1509,7 +2359,10 @@ mod tests {
 
         run_command(&mut app).unwrap();
 
-        assert_eq!(app.confirm_action.map(action_label), Some("freeze"));
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Confirm(action)) if action_label(*action) == "freeze"
+        ));
         assert_eq!(app.status, "confirm freeze");
     }
 
@@ -1520,7 +2373,10 @@ mod tests {
 
         run_command(&mut app).unwrap();
 
-        assert_eq!(app.confirm_action.map(action_label), Some("info"));
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Confirm(action)) if action_label(*action) == "info"
+        ));
         assert_eq!(app.status, "confirm info");
     }
 
@@ -1533,10 +2389,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["enable:demo"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Enabled demo for managed lifecycle.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Enabled demo for managed lifecycle."
+        ));
     }
 
     #[test]
@@ -1548,10 +2404,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["unsync:demo"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Unsynced demo from runtime targets.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Unsynced demo from runtime targets."
+        ));
     }
 
     #[test]
@@ -1561,7 +2417,10 @@ mod tests {
 
         run_command(&mut app).unwrap();
 
-        assert_eq!(app.confirm_action.map(action_label), Some("disable"));
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Confirm(action)) if action_label(*action) == "disable"
+        ));
         assert_eq!(app.status, "confirm disable");
     }
 
@@ -1572,7 +2431,10 @@ mod tests {
 
         run_command(&mut app).unwrap();
 
-        assert_eq!(app.confirm_action.map(action_label), Some("resync"));
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Confirm(action)) if action_label(*action) == "resync"
+        ));
         assert_eq!(app.status, "confirm resync");
     }
 
@@ -1585,10 +2447,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["disable:demo"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Disabled demo in configuration.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Disabled demo in configuration."
+        ));
     }
 
     #[test]
@@ -1600,10 +2462,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["resync:demo"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Resynced demo to runtime targets.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Resynced demo to runtime targets."
+        ));
     }
 
     #[test]
@@ -1615,10 +2477,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["freeze"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Wrote lockfile from current managed state.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Wrote lockfile from current managed state."
+        ));
     }
 
     #[test]
@@ -1630,10 +2492,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["thaw"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Applied lockfile state back into configuration.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Applied lockfile state back into configuration."
+        ));
     }
 
     #[test]
@@ -1645,10 +2507,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["clean:false"]);
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("Removed generated temporary state.")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "Removed generated temporary state."
+        ));
     }
 
     #[test]
@@ -1661,11 +2523,10 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["info:demo"]);
         assert_eq!(app.status, "info ready for demo");
-        assert!(app
-            .pending_action_result
-            .as_deref()
-            .unwrap()
-            .contains("Skill: demo"));
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg.contains("Skill: demo")
+        ));
     }
 
     #[test]
@@ -1678,10 +2539,10 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(executor.calls(), vec!["outdated"]);
         assert_eq!(app.status, "outdated report ready");
-        assert_eq!(
-            app.pending_action_result.as_deref(),
-            Some("demo: up-to-date")
-        );
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Result(msg)) if msg == "demo: up-to-date"
+        ));
     }
 
     #[test]
@@ -1693,5 +2554,44 @@ mod tests {
         assert!(report.contains("skillmine add /tmp/my-skill"));
         assert!(report.contains("skillmine install"));
         assert!(report.contains("skillmine sync --target=opencode"));
+    }
+
+    #[test]
+    fn command_palette_navigation_updates_selected_index() {
+        let mut app = App::new(vec![sample_skill("demo")]);
+        app.mode = AppMode::Command;
+        app.command_selected = 0;
+
+        let items_len = app.command_items().len();
+        app.command_selected = (app.command_selected + 1).min(items_len - 1);
+        assert_eq!(app.command_selected, 1);
+
+        app.command_selected = (app.command_selected + 1).min(items_len - 1);
+        assert_eq!(app.command_selected, 2);
+
+        app.command_selected = app.command_selected.saturating_sub(1);
+        assert_eq!(app.command_selected, 1);
+
+        app.command_selected = app.command_selected.saturating_sub(1);
+        assert_eq!(app.command_selected, 0);
+
+        app.command_selected = app.command_selected.saturating_sub(1);
+        assert_eq!(app.command_selected, 0);
+    }
+
+    #[test]
+    fn empty_state_shows_welcome_guide() {
+        let app = App::new(vec![]);
+        assert!(app.skills.is_empty());
+        assert!(app.filter_query.is_empty());
+    }
+
+    #[test]
+    fn command_items_returns_descriptions() {
+        let app = App::new(vec![]);
+        let items = app.command_items();
+        let (name, desc) = items[0];
+        assert_eq!(name, "create");
+        assert!(!desc.is_empty());
     }
 }

@@ -1,6 +1,11 @@
 use chrono::Utc;
 use std::path::{Path, PathBuf};
 
+pub(crate) struct CreatedSkill {
+    pub target_dir: PathBuf,
+    pub message: String,
+}
+
 fn validate_create_skill_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     if name.is_empty() {
         return Err("Skill name cannot be empty".into());
@@ -150,10 +155,10 @@ fn create_success_message(target_dir: &Path) -> String {
     )
 }
 
-pub async fn create(
+pub(crate) fn create_created_skill(
     name: String,
     output_dir: Option<String>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<CreatedSkill, Box<dyn std::error::Error>> {
     validate_create_skill_name(&name)?;
     let target_dir = create_target_dir(&name, output_dir.as_deref())?;
 
@@ -162,5 +167,16 @@ pub async fn create(
     }
 
     effect_write_created_skill(&target_dir, &name)?;
-    Ok(create_success_message(&target_dir))
+
+    Ok(CreatedSkill {
+        message: create_success_message(&target_dir),
+        target_dir,
+    })
+}
+
+pub async fn create(
+    name: String,
+    output_dir: Option<String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(create_created_skill(name, output_dir)?.message)
 }

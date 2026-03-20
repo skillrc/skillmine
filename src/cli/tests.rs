@@ -152,6 +152,51 @@
     }
 
     #[tokio::test]
+    async fn test_create_and_add_generates_skill_and_registers_local_source() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        crate::config::io::save_config(&Config::default(), &temp_dir.path().join("skills.toml"))
+            .unwrap();
+
+        let result = create_and_add("demo-skill".to_string(), None).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        let skill_dir = temp_dir.path().join("demo-skill");
+        assert!(skill_dir.join("SKILL.toml").exists());
+        let skill = updated.skills.get("demo-skill").unwrap();
+        match &skill.source {
+            SkillSource::Local { path } => {
+                assert_eq!(path, &skill_dir.to_string_lossy().to_string());
+            }
+            other => panic!("expected local source, got {other:?}"),
+        }
+        assert!(output.contains("Created skill package at"));
+        assert!(output.contains("Added source 'demo-skill' to configuration"));
+    }
+
+    #[tokio::test]
+    async fn test_create_and_add_without_config_fails_before_scaffold() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let result = create_and_add("demo-skill".to_string(), None).await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_err());
+        assert!(!temp_dir.path().join("demo-skill").exists());
+    }
+
+    #[tokio::test]
     async fn test_init_local_creates_config_file() {
         let _guard = cwd_lock().await.lock().await;
         let temp_dir = TempDir::new().unwrap();

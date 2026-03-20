@@ -29,3 +29,12 @@ pub fn find_config() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
     Err("No configuration file found. Run 'skillmine init' first.".into())
 }
+
+pub fn find_local_config() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let local_path = PathBuf::from("skills.toml");
+    if local_path.exists() {
+        return Ok(local_path);
+    }
+
+    Err("No local configuration file found. Run 'skillmine init --local' first.".into())
+}

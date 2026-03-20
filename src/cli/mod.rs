@@ -404,13 +404,13 @@ pub async fn add(
     add_with_options(repo, branch, tag, true).await.map(|_| ())
 }
 
-pub async fn add_with_options(
+async fn add_with_config_path(
+    config_path: PathBuf,
     repo: String,
     branch: Option<String>,
     tag: Option<String>,
     emit_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let config_path = crate::config::io::find_config()?;
     let add_skill_input = guard_add_skill_input(&repo, branch, tag)?;
     let skill_name = effect_add_skill_to_config(&config_path, add_skill_input)?;
     if emit_output {
@@ -421,6 +421,34 @@ pub async fn add_with_options(
         "Added source '{}' to configuration. Next: install to prepare it locally.",
         skill_name
     ))
+}
+
+pub async fn add_with_options(
+    repo: String,
+    branch: Option<String>,
+    tag: Option<String>,
+    emit_output: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    add_with_config_path(config_path, repo, branch, tag, emit_output).await
+}
+
+pub async fn create_and_add(
+    name: String,
+    output_dir: Option<String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_local_config()?;
+    let created = create::create_created_skill(name, output_dir)?;
+    let add_message = add_with_config_path(
+        config_path,
+        created.target_dir.to_string_lossy().to_string(),
+        None,
+        None,
+        false,
+    )
+    .await?;
+
+    Ok(format!("{}\n{}", created.message, add_message))
 }
 
 pub async fn enable(name: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -513,7 +541,7 @@ pub async fn install(force: bool, verbose: bool) -> Result<(), Box<dyn std::erro
                 }
             }
         }
-        summary.record(&outcome);
+        summary.record(outcome);
     }
 
     println!("\nInstallation complete:");

@@ -12,6 +12,7 @@ fn lifecycle_stage(summary: &crate::cli::SkillSummary) -> String {
     summary.statuses.join("+")
 }
 
+#[allow(dead_code)]
 pub async fn info(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let (_, config, _, lockfile) = super::config_and_lockfile()?;
     let tmp_root = super::tmp_root()?;
@@ -52,6 +53,7 @@ pub async fn info(name: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn outdated() -> Result<(), Box<dyn std::error::Error>> {
     let (_, config, _, lockfile) = super::config_and_lockfile()?;
 

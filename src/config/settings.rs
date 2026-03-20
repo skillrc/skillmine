@@ -208,6 +208,7 @@ impl Serialize for ConfigSkill {
             _ => {
                 #[derive(Serialize)]
                 #[serde(untagged)]
+                #[allow(clippy::enum_variant_names)]
                 enum Detailed<'a> {
                     GitHub {
                         repo: &'a str,

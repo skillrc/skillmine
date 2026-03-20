@@ -26,12 +26,14 @@ struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     Create {
         name: String,
         #[arg(short = 'o', long)]
         output_dir: Option<String>,
+        #[arg(long)]
+        and_add: bool,
     },
     Init {
         #[arg(short, long)]
@@ -118,8 +120,16 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
-        Some(Commands::Create { name, output_dir }) => {
-            let output = cli::create(name, output_dir).await?;
+        Some(Commands::Create {
+            name,
+            output_dir,
+            and_add,
+        }) => {
+            let output = if and_add {
+                cli::create_and_add(name, output_dir).await?
+            } else {
+                cli::create(name, output_dir).await?
+            };
             println!("{}", output);
         }
         Some(Commands::Init { local }) => cli::init(local).await?,
@@ -156,4 +166,28 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_parses_create_and_add_flag() {
+        let cli = Cli::parse_from(["skillmine", "create", "demo-skill", "--and-add"]);
+
+        match cli.command {
+            Some(Commands::Create {
+                name,
+                output_dir,
+                and_add,
+            }) => {
+                assert_eq!(name, "demo-skill");
+                assert_eq!(output_dir, None);
+                assert!(and_add);
+            }
+            other => panic!("expected create command, got {other:?}"),
+        }
+    }
 }
