@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub fn parse_github_ref(
     input: &str,
 ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {

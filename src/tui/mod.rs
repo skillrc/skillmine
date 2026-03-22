@@ -496,7 +496,7 @@ impl<'a> DetailPanel<'a> {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  Your skill package manager for AI coding assistants",
+                "  Your local-first skill workflow manager",
                 self.theme.muted_style(),
             )),
         ])
@@ -518,8 +518,8 @@ impl<'a> DetailPanel<'a> {
             ]),
             Line::from(vec![
                 Span::styled("  2. ", self.theme.highlight_style()),
-                Span::styled("Add an existing skill:  ", self.theme.muted_style()),
-                Span::styled("skillmine add owner/repo", self.theme.info_style()),
+                Span::styled("Add a local skill:      ", self.theme.muted_style()),
+                Span::styled("skillmine add ./my-skill", self.theme.info_style()),
             ]),
             Line::from(vec![
                 Span::styled("  3. ", self.theme.highlight_style()),
@@ -530,7 +530,7 @@ impl<'a> DetailPanel<'a> {
             Line::from(vec![
                 Span::styled("  Press ", self.theme.muted_style()),
                 Span::styled("'a'", self.theme.highlight_style()),
-                Span::styled(" to add a skill source", self.theme.muted_style()),
+                Span::styled(" to add a local skill path", self.theme.muted_style()),
             ]),
             Line::from(vec![
                 Span::styled("  Press ", self.theme.muted_style()),
@@ -831,10 +831,7 @@ impl ModalRenderer {
                 selected,
             } => self.command_palette_text(query, commands, *selected),
             ModalType::AddSkill { input } => {
-                format!(
-                    "Enter skill source (GitHub owner/repo[/path] or local path):\n{}",
-                    input
-                )
+                format!("Enter local skill path:\n{}", input)
             }
             ModalType::CreateSkill { input } => {
                 format!("Enter new skill name:\n{}", input)
@@ -1135,7 +1132,7 @@ impl App {
     fn command_items(&self) -> Vec<(&'static str, &'static str)> {
         let commands: Vec<(&'static str, &'static str)> = vec![
             ("create", "generate local skill package"),
-            ("add", "register skill source in config"),
+            ("add", "register local skill path in config"),
             ("enable", "enable selected skill"),
             ("disable", "disable selected skill"),
             ("unsync", "remove from runtime targets"),
@@ -1144,8 +1141,8 @@ impl App {
             ("update", "refresh skill source"),
             ("sync", "expose skills to target runtime"),
             ("remove", "remove skill from config"),
-            ("freeze", "write lockfile from current state"),
-            ("thaw", "apply lockfile back to config"),
+            ("freeze", "write resolved state from current install"),
+            ("thaw", "apply resolved state back to config"),
             ("info", "show detailed skill metadata"),
             ("outdated", "check for drift or updates"),
             ("clean", "remove cache or tmp state"),
@@ -1794,15 +1791,15 @@ fn execute_action(
             action_executor.freeze_skills()?;
             app.status = "froze managed state".to_string();
             app.modal = Some(Modal::Result(
-                "Wrote lockfile from current managed state.".to_string(),
+                "Wrote resolved state from current managed state.".to_string(),
             ));
             app.refresh();
         }
         PendingAction::Thaw => {
             action_executor.thaw_skills()?;
-            app.status = "thawed lockfile state".to_string();
+            app.status = "thawed resolved state".to_string();
             app.modal = Some(Modal::Result(
-                "Applied lockfile state back into configuration.".to_string(),
+                "Applied resolved state back into configuration.".to_string(),
             ));
             app.refresh();
         }
@@ -1979,7 +1976,7 @@ mod tests {
         fn add_skill(&self, repo: String) -> Result<String, Box<dyn std::error::Error>> {
             self.calls.borrow_mut().push(format!("add:{repo}"));
             Ok(format!(
-                "Added source '{}' to configuration. Next: install to prepare it locally.",
+                "Added local source '{}' to configuration. Next: install to prepare it locally.",
                 repo
             ))
         }
@@ -2137,7 +2134,7 @@ mod tests {
 
         assert_eq!(
             report,
-            "Added source '/tmp/opencode-skill-local-demo' to configuration. Next: install to prepare it locally."
+            "Added local source '/tmp/opencode-skill-local-demo' to configuration. Next: install to prepare it locally."
         );
     }
 
@@ -2479,7 +2476,7 @@ mod tests {
         assert_eq!(executor.calls(), vec!["freeze"]);
         assert!(matches!(
             &app.modal,
-            Some(Modal::Result(msg)) if msg == "Wrote lockfile from current managed state."
+            Some(Modal::Result(msg)) if msg == "Wrote resolved state from current managed state."
         ));
     }
 
@@ -2494,7 +2491,7 @@ mod tests {
         assert_eq!(executor.calls(), vec!["thaw"]);
         assert!(matches!(
             &app.modal,
-            Some(Modal::Result(msg)) if msg == "Applied lockfile state back into configuration."
+            Some(Modal::Result(msg)) if msg == "Applied resolved state back into configuration."
         ));
     }
 

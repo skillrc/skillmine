@@ -93,7 +93,7 @@ pub fn load_skill_summaries() -> Result<Vec<SkillSummary>, Box<dyn std::error::E
 }
 
 pub async fn add_skill(repo: String) -> Result<String, Box<dyn std::error::Error>> {
-    super::add_with_options(repo, None, None, false).await
+    super::add_with_options(repo, false).await
 }
 
 pub async fn create_skill(

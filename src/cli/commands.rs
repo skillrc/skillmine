@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::installer::ContentStore;
+use crate::source_refs::GitClient;
 
 use super::diagnostics::{print_diagnostic, skill_health_lines, DiagnosticLevel};
 use super::pure::{describe_locked_skill, describe_skill_source};
@@ -151,7 +152,7 @@ pub async fn doctor() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 warn_count += 1;
             } else if locked.source_type == "github"
-                && !crate::registry::GitClient::has_resolvable_head(&tmp_repo)
+                && !GitClient::has_resolvable_head(&tmp_repo)
             {
                 print_diagnostic(
                     DiagnosticLevel::Warn,

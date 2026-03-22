@@ -2,8 +2,7 @@ SKILLMINE(1)
 
 ```text
 NAME
-       skillmine - skill creation, package management, sync engine, and diagnostics tool
-       for AI coding assistant skills
+       skillmine - local-first skill lifecycle and OpenCode sync tool
 
 SYNOPSIS
        skillmine [COMMAND] [OPTIONS]
@@ -11,13 +10,12 @@ SYNOPSIS
 
 ```text
 DESCRIPTION
-       Skillmine creates and manages skill packages declaratively across
-       Claude Code and OpenCode.
+       Skillmine is a local-first asset manager for OpenCode-oriented skill
+       workflows.
 
-       It scaffolds manifest-first local skill packages, resolves package
-       sources, writes lock state, materializes content into
-       content-addressable storage, and syncs runtime assets into target
-       assistant directories.
+       It scaffolds local skill packages, registers local paths in config,
+       prepares local managed state, and syncs runtime assets into assistant
+       directories.
 
        Skillmine now supports the full local lifecycle:
        create -> add -> install -> sync -> doctor.
@@ -30,8 +28,8 @@ PUBLIC ALPHA STATUS
        Skillmine is currently in public alpha.
 
        Supported runtime targets in this release:
-       - claude
        - opencode
+       - claude
 
        Known limitations:
        - no Cursor runtime target in the current alpha
@@ -46,8 +44,8 @@ COMMANDS
        +------------------+-------------------------------------------+
        | create <name>    | Generate a local skill package skeleton   |
        | init             | Initialize skills.toml                    |
-       | add <repo>       | Add skill from GitHub or local path       |
-       | install          | Resolve and cache configured skills       |
+       | add <path>       | Add local skill path to configuration     |
+       | install          | Prepare configured skills in local state  |
        | sync --target    | Symlink runtime assets to assistant target|
        | freeze           | Generate lockfile                         |
        | thaw             | Apply lockfile state back into config     |
@@ -79,6 +77,7 @@ cargo build --release
 QUICK START
 mkdir project && cd project
 skillmine init
+skillmine config set workspace ~/Project/Skills
 skillmine create my-skill
 skillmine add ./my-skill
 skillmine install
@@ -88,36 +87,35 @@ skillmine doctor
 
 ```text
 MENTAL MODEL
-       Create generates a new local skill package scaffold.
-       Add registers a skill source in config.
-       Install prepares configured skills in local managed state.
-       Sync exposes configured skills to an assistant runtime target.
+        Create generates a new local skill package scaffold.
+        Add registers a local skill source in config.
+        Install prepares configured skills in local managed state.
+        Sync exposes configured skills to an assistant runtime target.
 
-       Source types:
-       - GitHub ref: owner/repo[/path]
-       - Local path: /path/to/skill
-       - Version reference: registry version constraint
+        Source model:
+        - Local path: /path/to/skill
+        - Remote GitHub refs are rejected in the current local-first release
 ```
 
 ```text
 ARCHITECTURE
-       Deterministic state model:
+       Local-first state model:
 
-           +------------------+
-           |  skills.toml     |  desired state
-           +--------+---------+
-                    |
-                    v
-           +------------------+
-           | skills.lock.toml |  resolved state
-           +--------+---------+
-                    |
-                    v
-           +------------------+
-           | CAS store + tmp  |  materialized state
-           +--------+---------+
-                    |
-                    v
+            +------------------+
+            |  skills.toml     |  desired local state
+            +--------+---------+
+                     |
+                     v
+            +------------------+
+            | skills.lock.toml |  prepared local state
+            +--------+---------+
+                     |
+                     v
+            +------------------+
+            | local managed    |  materialized state
+            +--------+---------+
+                     |
+                     v
            +------------------+
            | runtime target   |  activated symlink view
            +------------------+
@@ -141,12 +139,12 @@ CONTENT-ADDRESSABLE STORAGE
 
 ```text
 SYNC TARGETS
-       +-------------+-----------------------------------------------+
-       | Target      | Path                                          |
-       +-------------+-----------------------------------------------+
-       | claude      | ~/.claude/skills/                             |
-       | opencode    | ~/.config/opencode/skills/                    |
-       +-------------+-----------------------------------------------+
+        +-------------+-----------------------------------------------+
+        | Target      | Path                                          |
+        +-------------+-----------------------------------------------+
+        | opencode    | ~/.config/opencode/skills/                    |
+        | claude      | ~/.claude/skills/                             |
+        +-------------+-----------------------------------------------+
 ```
 
 ```text
@@ -169,39 +167,32 @@ CONFIGURATION
 version = "1.0"
 
 [settings]
-concurrency = 5
-timeout = 300
+workspace = "~/Project/Skills"
 
 [skills]
-git-release = { repo = "anthropic/skills", path = "git-release" }
-stable = { repo = "user/skill", commit = "abc123def" }
-dev = { repo = "user/skill", branch = "develop" }
 my-skill = { path = "~/dev/my-skill" }
 ```
 
 ```text
 STATE MODEL
-       +-------------+-----------------------------------------------+
-       | State       | Meaning                                       |
-       +-------------+-----------------------------------------------+
-       | configured  | Declared in skills.toml                       |
-       | locked      | Resolved in skills.lock.toml                  |
-       | cached      | Present in content-addressable store          |
-       | installed   | Present in tmp/source materialization         |
-       | synced      | Exposed in assistant runtime target           |
-       +-------------+-----------------------------------------------+
+        +-------------+-----------------------------------------------+
+        | State       | Meaning                                       |
+        +-------------+-----------------------------------------------+
+        | configured  | Declared in skills.toml                       |
+        | locked      | Prepared in skills.lock.toml                  |
+        | installed   | Present in local managed state                |
+        | synced      | Exposed in assistant runtime target           |
+        +-------------+-----------------------------------------------+
 ```
 
 ```text
 DOCTOR OUTPUT
-       skillmine doctor validates:
+        skillmine doctor validates:
 
-       - configuration shape
-       - lock consistency
-       - cache presence
-       - tmp clone health
-       - local path existence
-       - per-skill drift indicators
+        - configuration shape
+        - lock consistency
+        - local path existence
+        - per-skill drift indicators
 ```
 
 ```text
@@ -222,19 +213,18 @@ TUI
 
 ```text
 UNIX MODEL
-       Skillmine follows a narrow operational role:
+        Skillmine follows a narrow operational role:
 
-       1. Read declarative input
-       2. Resolve exact package state
-       3. Materialize content deterministically
-       4. Expose runtime assets by symlink or target sync
-       5. Diagnose drift explicitly
+        1. Read declarative input
+        2. Prepare local managed state
+        3. Expose runtime assets by symlink or target sync
+        4. Diagnose drift explicitly
 ```
 
 ```text
 FILES
-       ./skills.toml
-              Desired package configuration.
+        ./skills.toml
+               Desired local asset configuration.
 
        ./docs/bugs.md
               Lightweight in-repository bug backlog entry point.
@@ -245,17 +235,11 @@ FILES
        ./docs/alpha-release-readiness.md
               Executed public alpha readiness checklist and known limitations.
 
-       ./skills.lock.toml
-              Resolved package state.
+        ./skills.lock.toml
+               Prepared local state.
 
-       ~/.local/share/skillmine/store/
-              Content-addressable store.
-
-       ~/.local/share/skillmine/tmp/
-              Temporary Git clones and resolution workspace.
-
-       ~/.config/opencode/skills/
-              OpenCode runtime sync target.
+        ~/.config/opencode/skills/
+               OpenCode runtime sync target.
 
        ~/.claude/skills/
               Claude Code runtime sync target.

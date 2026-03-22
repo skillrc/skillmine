@@ -1,6 +1,6 @@
 # SKILLMINE Brand Assets
 
-> Terminal-friendly brand assets for the AI skill package manager
+> Terminal-friendly brand assets for the local-first AI skill workflow manager
 
 ---
 
@@ -50,7 +50,7 @@ Highlight:        #00D9FF  (Bright Cyan)
    ⛏️
   ╱ ╲
  ╱   ╲    SKILLMINE
-╱_____╲   Package Manager for AI Skills
+╱_____╲   Local-First Skill Workflows
   ║ ║
   ║ ║
 ```
@@ -73,7 +73,7 @@ Highlight:        #00D9FF  (Bright Cyan)
   ┌─────────┐
   │ ▓▓▓▓▓▓▓ │
   │ ▓ S M ▓ │  SKILLMINE
-  │ ▓▓▓▓▓▓▓ │  AI Skill Package Manager
+│ ▓▓▓▓▓▓▓ │  AI Skill Workflow Manager
   └─────────┘
 ```
 
@@ -125,9 +125,9 @@ Highlight:        #00D9FF  (Bright Cyan)
 ║     ███████║██║  ██╗██║███████╗███████╗██║ ╚═╝ ██║██║██║ ╚████║███████╗ ║
 ║     ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝ ║
 ║                                                                           ║
-║                    ⛏  Package Manager for AI Skills  ⛏                   ║
+║                  ⛏  Local-First Skill Workflows  ⛏                      ║
 ║                                                                           ║
-║              Declarative • Deterministic • Dependency-Aware              ║
+║                 Local-First • Deterministic • Runtime-Synced             ║
 ║                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════╝
 ```
@@ -143,7 +143,7 @@ Highlight:        #00D9FF  (Bright Cyan)
 ║           ██ ██  ██  ██ ██      ██      ██  ██  ██ ██ ██  ██ ║
 ║      ███████ ██   ██ ██ ███████ ███████ ██      ██ ██ ██   ██║
 ║                                                                ║
-║            Package Manager for AI Coding Skills                ║
+║          Local-First Workflow Manager for AI Skills            ║
 ║                                                                ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
@@ -152,7 +152,7 @@ Highlight:        #00D9FF  (Bright Cyan)
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ⛏  SKILLMINE  —  Package Manager for AI Skills
+  ⛏  SKILLMINE  —  Local-First Skill Workflows
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -167,7 +167,7 @@ Highlight:        #00D9FF  (Bright Cyan)
 │                                                 │
 │      ⛏  SKILLMINE v1.0.0                       │
 │                                                 │
-│      Package Manager for AI Skills             │
+│      Local-First Skill Workflows               │
 │                                                 │
 │      Built with Rust • Powered by Tokio        │
 │      https://skillmine.dev                     │
@@ -182,13 +182,13 @@ Highlight:        #00D9FF  (Bright Cyan)
 ║                                                               ║
 ║     ⛏  Welcome to SKILLMINE                                  ║
 ║                                                               ║
-║     The declarative package manager for AI coding skills     ║
+║     The local-first workflow manager for AI coding skills    ║
 ║                                                               ║
 ║     Getting Started:                                         ║
 ║     ────────────────                                         ║
 ║                                                               ║
 ║     1. Initialize:    skillmine init                         ║
-║     2. Add skills:    skillmine add anthropic/skills/git     ║
+║     2. Add skills:    skillmine add ./my-skill               ║
 ║     3. Install:       skillmine install                      ║
 ║     4. Sync:          skillmine sync --target=claude         ║
 ║                                                               ║
@@ -219,7 +219,7 @@ Highlight:        #00D9FF  (Bright Cyan)
 │  ✓  Installation Complete!                     │
 │                                                 │
 │  Installed 10 skills in 8.3 seconds             │
-│  Saved 156 MB with content-addressable storage │
+│  Prepared local state for runtime sync         │
 │                                                 │
 │  Next: skillmine sync --target=claude          │
 │                                                 │

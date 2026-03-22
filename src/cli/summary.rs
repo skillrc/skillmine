@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::config::ConfigSkill;
 use crate::installer::ContentStore;
-use crate::lockfile::{LockedSkill, Lockfile};
+use crate::resolved_state::{LockedSkill, Lockfile};
 
 use super::pure::{describe_locked_skill, describe_skill_source};
 use super::state::{classify_outdated, format_statuses, skill_statuses};
@@ -64,7 +64,7 @@ pub fn skill_summary(
     store: &ContentStore,
 ) -> SkillSummary {
     let statuses = skill_statuses(name, skill, lockfile, tmp_root, store);
-    let locked = lockfile.and_then(|lock| lock.get_skill(name));
+    let locked = lockfile.and_then(|lock: &Lockfile| lock.get_skill(name));
     let manifest = load_manifest_for_config_skill(name, skill, tmp_root);
 
     SkillSummary {

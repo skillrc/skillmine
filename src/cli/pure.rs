@@ -1,5 +1,5 @@
 use crate::config::ConfigSkill;
-use crate::lockfile::LockedSkill;
+use crate::resolved_state::LockedSkill;
 
 pub fn short_hash(value: &str) -> String {
     value.chars().take(8).collect()

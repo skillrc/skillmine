@@ -2,7 +2,8 @@ use std::path::Path;
 
 use crate::config::ConfigSkill;
 use crate::installer::ContentStore;
-use crate::lockfile::Lockfile;
+use crate::resolved_state::Lockfile;
+use crate::source_refs::GitClient;
 
 use super::state::{classify_outdated, format_outdated_state, OutdatedState};
 
@@ -36,7 +37,10 @@ pub fn skill_health_lines(
 ) -> Vec<(DiagnosticLevel, String)> {
     let mut lines = Vec::new();
 
-    let state = classify_outdated(skill, lockfile.and_then(|lock| lock.get_skill(name)));
+    let state = classify_outdated(
+        skill,
+        lockfile.and_then(|lock: &Lockfile| lock.get_skill(name)),
+    );
     lines.push((
         match state {
             OutdatedState::LockDrift | OutdatedState::SourceMismatch => DiagnosticLevel::Warn,
@@ -49,21 +53,21 @@ pub fn skill_health_lines(
         format!("skill '{}' state: {}", name, format_outdated_state(state)),
     ));
 
-    if let Some(locked) = lockfile.and_then(|lock| lock.get_skill(name)) {
+    if let Some(locked) = lockfile.and_then(|lock: &Lockfile| lock.get_skill(name)) {
         if store.get(&locked.resolved_tree_hash).is_some() {
             lines.push((
                 DiagnosticLevel::Pass,
-                format!("skill '{}' cache present", name),
+                format!("skill '{}' prepared content present", name),
             ));
         }
     }
 
     if matches!(skill.source, crate::config::SkillSource::GitHub { .. }) {
         let repo_dir = tmp_path.join(name);
-        if repo_dir.exists() && crate::registry::GitClient::has_resolvable_head(&repo_dir) {
+        if repo_dir.exists() && GitClient::has_resolvable_head(&repo_dir) {
             lines.push((
                 DiagnosticLevel::Pass,
-                format!("skill '{}' tmp clone healthy", name),
+                format!("skill '{}' local checkout healthy", name),
             ));
         }
     }

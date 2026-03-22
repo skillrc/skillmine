@@ -33,3 +33,7 @@ target
 skills.toml
 test_output/
 test-manual/
+test-local-skill/
+haha/
+hahaha/
+.vercel
