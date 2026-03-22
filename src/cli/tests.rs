@@ -3,7 +3,7 @@
     use crate::cli::diagnostics::{DiagnosticLevel, DiagnosticSummary};
     use crate::cli::state::{classify_outdated, OutdatedState, SkillStatus};
     use crate::config::{Config, ConfigSkill, SkillSource};
-    use crate::lockfile::LOCKFILE_NAME;
+    use crate::resolved_state::LOCKFILE_NAME;
     use chrono::Utc;
     use git2::{Repository, Signature};
     use tempfile::TempDir;
@@ -104,13 +104,20 @@
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(temp_dir.path()).unwrap();
 
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path());
+        }
+
         let result = create("demo-skill".to_string(), None).await;
 
+        unsafe {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
         std::env::set_current_dir(original_dir).unwrap();
 
         assert!(result.is_ok());
         let output = result.unwrap();
-        let skill_dir = temp_dir.path().join("demo-skill");
+        let skill_dir = temp_dir.path().join("skillmine").join("skills").join("demo-skill");
 
         assert!(skill_dir.exists());
         assert!(skill_dir.join("SKILL.toml").exists());
@@ -152,11 +159,37 @@
     }
 
     #[tokio::test]
+    async fn test_create_uses_workspace_from_config_when_present() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let workspace_dir = temp_dir.path().join("workspace-skills");
+        let mut config = Config::default();
+        config.settings.workspace = Some(workspace_dir.to_string_lossy().to_string());
+        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
+
+        let result = create("demo-skill".to_string(), None).await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let skill_dir = workspace_dir.join("demo-skill");
+        assert!(skill_dir.join("SKILL.toml").exists());
+        assert!(result.unwrap().contains(&skill_dir.to_string_lossy().to_string()));
+    }
+
+    #[tokio::test]
     async fn test_create_and_add_generates_skill_and_registers_local_source() {
         let _guard = cwd_lock().await.lock().await;
         let temp_dir = TempDir::new().unwrap();
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path());
+        }
 
         crate::config::io::save_config(&Config::default(), &temp_dir.path().join("skills.toml"))
             .unwrap();
@@ -164,11 +197,14 @@
         let result = create_and_add("demo-skill".to_string(), None).await;
         let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
 
+        unsafe {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
         std::env::set_current_dir(original_dir).unwrap();
 
         assert!(result.is_ok());
         let output = result.unwrap();
-        let skill_dir = temp_dir.path().join("demo-skill");
+        let skill_dir = temp_dir.path().join("skillmine").join("skills").join("demo-skill");
         assert!(skill_dir.join("SKILL.toml").exists());
         let skill = updated.skills.get("demo-skill").unwrap();
         match &skill.source {
@@ -178,7 +214,60 @@
             other => panic!("expected local source, got {other:?}"),
         }
         assert!(output.contains("Created skill package at"));
-        assert!(output.contains("Added source 'demo-skill' to configuration"));
+        assert!(output.contains("Added local source '"));
+    }
+
+    #[tokio::test]
+    async fn test_config_set_persists_workspace_value() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let result = config_set("workspace".to_string(), "~/Project/Skills".to_string()).await;
+        let updated = crate::config::io::load_config(&temp_dir.path().join("skillmine").join("skills.toml")).unwrap();
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(updated.settings.workspace.as_deref(), Some("~/Project/Skills"));
+    }
+
+    #[tokio::test]
+    async fn test_config_show_reports_workspace_value() {
+        let _guard = cwd_lock().await.lock().await;
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let mut config = Config::default();
+        config.settings.workspace = Some("~/Project/Skills".to_string());
+        let config_path = temp_dir.path().join("skillmine").join("skills.toml");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        crate::config::io::save_config(&config, &config_path).unwrap();
+
+        let result = config_show().await;
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("workspace = ~/Project/Skills"));
+        assert!(output.contains("skills.toml"));
     }
 
     #[tokio::test]
@@ -212,7 +301,7 @@
     }
 
     #[tokio::test]
-    async fn test_add_updates_local_config() {
+    async fn test_add_rejects_remote_path_and_keeps_config_empty() {
         let _guard = cwd_lock().await.lock().await;
         let temp_dir = TempDir::new().unwrap();
         let original_dir = std::env::current_dir().unwrap();
@@ -221,13 +310,13 @@
         let initial = Config::default();
         crate::config::io::save_config(&initial, &temp_dir.path().join("skills.toml")).unwrap();
 
-        let result = add("anthropic/skills/git-release".to_string(), None, None).await;
+        let result = add("anthropic/skills/git-release".to_string()).await;
         let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
 
         std::env::set_current_dir(original_dir).unwrap();
 
-        assert!(result.is_ok());
-        assert!(updated.skills.contains_key("git-release"));
+        assert!(result.is_err());
+        assert!(updated.skills.is_empty());
     }
 
     #[tokio::test]
@@ -244,7 +333,7 @@
         std::fs::create_dir_all(&local_skill_dir).unwrap();
         std::fs::write(local_skill_dir.join("README.md"), "demo").unwrap();
 
-        let result = add(local_skill_dir.to_string_lossy().to_string(), None, None).await;
+        let result = add(local_skill_dir.to_string_lossy().to_string()).await;
         let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
 
         std::env::set_current_dir(original_dir).unwrap();
@@ -269,7 +358,7 @@
         let initial = Config::default();
         crate::config::io::save_config(&initial, &temp_dir.path().join("skills.toml")).unwrap();
 
-        let result = add("/repo".to_string(), None, None).await;
+        let result = add("/repo".to_string()).await;
         let updated = crate::config::io::load_config(&temp_dir.path().join("skills.toml")).unwrap();
 
         std::env::set_current_dir(original_dir).unwrap();
@@ -653,7 +742,7 @@
         std::env::set_current_dir(temp_dir.path()).unwrap();
 
         let local_repo = init_local_git_repo();
-        let initial_resolved = crate::registry::GitClient::resolve_local_head(local_repo.path()).unwrap();
+        let initial_resolved = crate::source_refs::GitClient::resolve_local_head(local_repo.path()).unwrap();
 
         let mut config = Config::default();
         config.add_skill(
@@ -703,7 +792,7 @@
         std::env::set_current_dir(temp_dir.path()).unwrap();
 
         let local_repo = init_local_git_repo();
-        let initial_resolved = crate::registry::GitClient::resolve_local_head(local_repo.path()).unwrap();
+        let initial_resolved = crate::source_refs::GitClient::resolve_local_head(local_repo.path()).unwrap();
 
         let mut config = Config::default();
         config.add_skill(
@@ -737,7 +826,7 @@
         lockfile.save(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
 
         commit_file(local_repo.path(), "skill.md", "v2", "second");
-        let latest_resolved = crate::registry::GitClient::resolve_local_head(local_repo.path()).unwrap();
+        let latest_resolved = crate::source_refs::GitClient::resolve_local_head(local_repo.path()).unwrap();
 
         let result = update(Some("local-git".to_string())).await;
         lockfile = Lockfile::load(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
@@ -762,7 +851,7 @@
         std::fs::create_dir_all(&tmp_root_dir).unwrap();
         Repository::init(&repo_dir).unwrap();
         commit_file(&repo_dir, "skill.md", "v1", "initial");
-        let initial_resolved = crate::registry::GitClient::resolve_local_head(&repo_dir).unwrap();
+        let initial_resolved = crate::source_refs::GitClient::resolve_local_head(&repo_dir).unwrap();
 
         let mut config = Config::default();
         config.add_skill(
@@ -825,7 +914,7 @@
         std::fs::create_dir_all(&tmp_root_dir).unwrap();
         Repository::init(&repo_dir).unwrap();
         commit_file(&repo_dir, "skill.md", "v1", "initial");
-        let initial_resolved = crate::registry::GitClient::resolve_local_head(&repo_dir).unwrap();
+        let initial_resolved = crate::source_refs::GitClient::resolve_local_head(&repo_dir).unwrap();
 
         let mut config = Config::default();
         config.add_skill(
@@ -863,7 +952,7 @@
         lockfile.save(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
 
         commit_file(&repo_dir, "skill.md", "v2", "second");
-        let latest_resolved = crate::registry::GitClient::resolve_local_head(&repo_dir).unwrap();
+        let latest_resolved = crate::source_refs::GitClient::resolve_local_head(&repo_dir).unwrap();
 
         unsafe {
             std::env::set_var("XDG_DATA_HOME", temp_dir.path());
@@ -882,147 +971,6 @@
     }
 
     #[tokio::test]
-    async fn test_install_prefers_locked_tree_hash_for_github_tmp_clone() {
-        let _guard = cwd_lock().await.lock().await;
-        let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let tmp_root_dir = temp_dir.path().join("skillmine").join("tmp");
-        let store_root_dir = temp_dir.path().join("skillmine").join("store");
-        let repo_dir = tmp_root_dir.join("demo");
-        std::fs::create_dir_all(&tmp_root_dir).unwrap();
-        Repository::init(&repo_dir).unwrap();
-        commit_file(&repo_dir, "skill.md", "v1", "initial");
-        let initial_resolved = crate::registry::GitClient::resolve_local_head(&repo_dir).unwrap();
-
-        let mut config = Config::default();
-        config.add_skill(
-            "demo",
-            ConfigSkill { source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: None,
-                branch: Some("main".to_string()),
-                tag: None,
-                commit: None,
-            }, name: None, enabled: true, sync_enabled: true },
-        );
-        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
-
-        let lockfile = Lockfile {
-            version: 1,
-            generated_at: Utc::now(),
-            config_path: "skills.toml".to_string(),
-            skills: vec![LockedSkill {
-                name: "demo".to_string(),
-                source_type: "github".to_string(),
-                repo: Some("owner/repo".to_string()),
-                path: None,
-                requested_branch: Some("main".to_string()),
-                requested_tag: None,
-                requested_commit: None,
-                local_path: None,
-                version_constraint: None,
-                resolved_commit: initial_resolved.commit.clone(),
-                resolved_tree_hash: initial_resolved.tree_hash.clone(),
-                resolved_reference: initial_resolved.reference.clone(),
-                resolved_at: Utc::now(),
-            }],
-        };
-        lockfile.save(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
-
-        commit_file(&repo_dir, "skill.md", "v2", "second");
-
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path());
-        }
-        let result = install(false, false).await;
-        unsafe {
-            std::env::remove_var("XDG_DATA_HOME");
-        }
-
-        std::env::set_current_dir(original_dir).unwrap();
-
-        assert!(result.is_ok());
-        let refreshed_lock = Lockfile::load(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
-        let entry = refreshed_lock.get_skill("demo").unwrap();
-        assert_eq!(entry.resolved_commit, initial_resolved.commit);
-        assert!(store_root_dir.exists());
-    }
-
-    #[tokio::test]
-    async fn test_sync_uses_locked_cached_content_for_github_skill() {
-        let _guard = cwd_lock().await.lock().await;
-        let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let store = crate::installer::ContentStore::new(temp_dir.path().join("skillmine").join("store"));
-        store.init().unwrap();
-        let source_dir = temp_dir.path().join("cached-source");
-        std::fs::create_dir_all(&source_dir).unwrap();
-        std::fs::write(source_dir.join("skill.md"), "cached").unwrap();
-        let tree_hash = "ab1234567890";
-        let stored_path = store.store(tree_hash, &source_dir).unwrap();
-
-        let mut config = Config::default();
-        config.add_skill(
-            "demo",
-            ConfigSkill { source: SkillSource::GitHub {
-                repo: "owner/repo".to_string(),
-                path: None,
-                branch: Some("main".to_string()),
-                tag: None,
-                commit: None,
-            }, name: None, enabled: true, sync_enabled: true },
-        );
-        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
-
-        let lockfile = Lockfile {
-            version: 1,
-            generated_at: Utc::now(),
-            config_path: "skills.toml".to_string(),
-            skills: vec![LockedSkill {
-                name: "demo".to_string(),
-                source_type: "github".to_string(),
-                repo: Some("owner/repo".to_string()),
-                path: None,
-                requested_branch: Some("main".to_string()),
-                requested_tag: None,
-                requested_commit: None,
-                local_path: None,
-                version_constraint: None,
-                resolved_commit: "commit123".to_string(),
-                resolved_tree_hash: tree_hash.to_string(),
-                resolved_reference: "branch:main".to_string(),
-                resolved_at: Utc::now(),
-            }],
-        };
-        lockfile.save(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
-
-        let target_dir = temp_dir.path().join("target-skills");
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path());
-        }
-        let result = sync(
-            "claude".to_string(),
-            Some(target_dir.to_string_lossy().to_string()),
-        )
-        .await;
-        unsafe {
-            std::env::remove_var("XDG_DATA_HOME");
-        }
-
-        std::env::set_current_dir(original_dir).unwrap();
-
-        assert!(result.is_ok());
-        let synced = target_dir.join("demo");
-        assert!(synced.exists());
-        let canonical = std::fs::canonicalize(&synced).unwrap();
-        assert_eq!(canonical, stored_path);
-    }
-
-    #[tokio::test]
     async fn test_doctor_fails_for_invalid_config() {
         let _guard = cwd_lock().await.lock().await;
         let temp_dir = TempDir::new().unwrap();
@@ -1034,8 +982,6 @@
             r#"version = "2.0"
 
 [settings]
-concurrency = 0
-timeout = 300
 auto_sync = false
 "#,
         )
@@ -1396,7 +1342,7 @@ auto_sync = false
         std::fs::create_dir_all(&tmp_root_dir).unwrap();
         Repository::init(&github_tmp).unwrap();
         commit_file(&github_tmp, "skill.md", "gh-v1", "initial");
-        let resolved = crate::registry::GitClient::resolve_local_head(&github_tmp).unwrap();
+        let resolved = crate::source_refs::GitClient::resolve_local_head(&github_tmp).unwrap();
 
         let skill = ConfigSkill { source: SkillSource::GitHub {
             repo: "owner/repo".to_string(),
@@ -1648,49 +1594,6 @@ auto_sync = false
     }
 
     #[tokio::test]
-    async fn test_install_removes_broken_tmp_repo_before_reusing_it() {
-        let _guard = cwd_lock().await.lock().await;
-        let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let broken_tmp = temp_dir.path().join("skillmine").join("tmp").join("git-release");
-        std::fs::create_dir_all(broken_tmp.join(".git/refs/heads")).unwrap();
-        std::fs::write(broken_tmp.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::write(
-            broken_tmp.join(".git/config"),
-            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
-        )
-        .unwrap();
-
-        let mut config = Config::default();
-        config.add_skill(
-            "git-release",
-            ConfigSkill { source: SkillSource::GitHub {
-                repo: "anthropic/skills".to_string(),
-                path: Some("git-release".to_string()),
-                branch: None,
-                tag: None,
-                commit: None,
-            }, name: None, enabled: true, sync_enabled: true },
-        );
-        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
-
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path());
-        }
-        let result = install(false, false).await;
-        unsafe {
-            std::env::remove_var("XDG_DATA_HOME");
-        }
-
-        std::env::set_current_dir(original_dir).unwrap();
-
-        assert!(result.is_err() || result.is_ok());
-        assert!(!broken_tmp.exists());
-    }
-
-    #[tokio::test]
     async fn test_install_concurrent_local_skills_refreshes_lockfile_for_all() {
         let _guard = cwd_lock().await.lock().await;
         let temp_dir = TempDir::new().unwrap();
@@ -1705,7 +1608,6 @@ auto_sync = false
         std::fs::write(source_dir_b.join("README.md"), "skill-b").unwrap();
 
         let mut config = Config::default();
-        config.settings.concurrency = 2;
         config.add_skill(
             "local-skill-a",
             ConfigSkill { source: SkillSource::Local {
@@ -1742,7 +1644,6 @@ auto_sync = false
         std::fs::write(source_dir.join("README.md"), "skill").unwrap();
 
         let mut config = Config::default();
-        config.settings.concurrency = 3;
         config.add_skill(
             "local-skill",
             ConfigSkill { source: SkillSource::Local {
@@ -1770,50 +1671,6 @@ auto_sync = false
         assert!(lockfile.get_skill("local-skill").is_some());
         assert!(lockfile.get_skill("missing-local").is_none());
         assert!(lockfile.get_skill("version-skill").is_some());
-    }
-
-    #[tokio::test]
-    async fn test_install_resolves_version_skill_through_registry() {
-        let _guard = cwd_lock().await.lock().await;
-        let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let source_repo = init_local_git_repo();
-        let repo = Repository::open(source_repo.path()).unwrap();
-        let head = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.tag_lightweight("v1.2.3", head.as_object(), false).unwrap();
-        let resolved = crate::registry::GitClient::resolve_local_head(source_repo.path()).unwrap();
-
-        let mut config = Config::default();
-        config.registry.insert(
-            "python-testing".to_string(),
-            crate::config::RegistryEntry {
-                repo: source_repo.path().to_string_lossy().to_string(),
-                path: None,
-            },
-        );
-        config.add_skill(
-            "python-testing",
-            ConfigSkill { source: SkillSource::Version("^1.0".to_string()), name: None, enabled: true, sync_enabled: true },
-        );
-        crate::config::io::save_config(&config, &temp_dir.path().join("skills.toml")).unwrap();
-
-        unsafe { std::env::set_var("XDG_DATA_HOME", temp_dir.path()); }
-        let result = install(false, false).await;
-        let lockfile = Lockfile::load(&temp_dir.path().join(LOCKFILE_NAME)).unwrap();
-        unsafe { std::env::remove_var("XDG_DATA_HOME"); }
-
-        std::env::set_current_dir(original_dir).unwrap();
-
-        assert!(result.is_ok());
-        let entry = lockfile.get_skill("python-testing").unwrap();
-        assert_eq!(entry.source_type, "github");
-        assert_eq!(entry.repo.as_deref(), Some(source_repo.path().to_string_lossy().as_ref()));
-        assert_eq!(entry.path, None);
-        assert_eq!(entry.version_constraint.as_deref(), Some("^1.0"));
-        assert_eq!(entry.requested_tag.as_deref(), Some("v1.2.3"));
-        assert_eq!(entry.resolved_commit, resolved.commit);
     }
 
     #[tokio::test]
