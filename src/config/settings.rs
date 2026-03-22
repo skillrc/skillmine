@@ -2,21 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
-    pub concurrency: usize,
-    pub timeout: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     pub auto_sync: bool,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            concurrency: 5,
-            timeout: 300,
-            auto_sync: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +275,21 @@ impl Serialize for ConfigSkill {
     }
 }
 
+/// A named collection of skills, commands, and agents for workflow activation
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BundleSpec {
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub agents: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_profile: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
     pub repo: String,
@@ -301,6 +306,8 @@ pub struct Config {
     pub registry: BTreeMap<String, RegistryEntry>,
     #[serde(default)]
     pub skills: BTreeMap<String, ConfigSkill>,
+    #[serde(default)]
+    pub bundles: BTreeMap<String, BundleSpec>,
 }
 
 impl Config {
@@ -322,10 +329,6 @@ impl Config {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != "1.0" && !self.version.starts_with("1.") {
             return Err(format!("unsupported config version: {}", self.version));
-        }
-
-        if self.settings.concurrency == 0 {
-            return Err("concurrency must be greater than 0".to_string());
         }
 
         for (name, skill) in &self.skills {
@@ -386,6 +389,7 @@ impl Default for Config {
             settings: Settings::default(),
             registry: BTreeMap::new(),
             skills: BTreeMap::new(),
+            bundles: BTreeMap::new(),
         }
     }
 }

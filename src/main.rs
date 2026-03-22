@@ -5,10 +5,10 @@ mod cli;
 mod config;
 mod error;
 mod installer;
-mod lockfile;
 mod manifest;
 mod pure;
-mod registry;
+mod resolved_state;
+mod source_refs;
 mod tui;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -18,8 +18,8 @@ const NAME: &str = env!("CARGO_PKG_NAME");
 #[command(
     name = "skillmine",
     version = VERSION,
-    about = "The package manager for AI coding assistant skills",
-    long_about = "Skillmine brings declarative, deterministic package management to AI coding assistants."
+    about = "Local-first skill lifecycle manager for AI coding assistants",
+    long_about = "Skillmine manages local skill creation, registration, preparation, sync, and diagnostics for assistant runtimes."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -34,17 +34,21 @@ enum Commands {
         output_dir: Option<String>,
         #[arg(long)]
         and_add: bool,
+        /// Asset type to create: skill (default), command, agent
+        #[arg(short = 't', long = "type", default_value = "skill")]
+        asset_type: String,
+    },
+    /// Manage bundles (named collections of skills/commands/agents)
+    Bundle {
+        #[command(subcommand)]
+        action: BundleCommands,
     },
     Init {
         #[arg(short, long)]
         local: bool,
     },
     Add {
-        repo: String,
-        #[arg(short, long)]
-        branch: Option<String>,
-        #[arg(short, long)]
-        tag: Option<String>,
+        path: String,
     },
     Enable {
         name: String,
@@ -92,6 +96,38 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommands {
+    Set {
+        key: String,
+        value: String,
+    },
+    Show,
+}
+
+#[derive(Debug, Subcommand)]
+enum BundleCommands {
+    /// Activate a bundle (write skills to opencode config)
+    Apply {
+        name: String,
+        /// Path to opencode config JSON (default: ~/.config/opencode/config.json)
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    /// List all defined bundles
+    List,
+    /// Deactivate current bundle (clear instructions)
+    Clear {
+        /// Path to opencode config JSON (default: ~/.config/opencode/config.json)
+        #[arg(long)]
+        config_path: Option<String>,
+    },
 }
 
 fn main() {
@@ -118,22 +154,69 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn default_opencode_config_path(custom: Option<String>) -> std::path::PathBuf {
+    if let Some(p) = custom {
+        return std::path::PathBuf::from(p);
+    }
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+        .join("opencode")
+        .join("config.json")
+}
+
+async fn bundle_action(action: BundleCommands) -> Result<(), Box<dyn std::error::Error>> {
+    use cli::bundle;
+
+    let config_path = crate::config::io::find_config()?;
+    let config = crate::config::io::load_config(&config_path)?;
+
+    match action {
+        BundleCommands::Apply { name, config_path: occ_path } => {
+            let bundles = &config.bundles;
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = bundle::bundle_apply(&name, bundles, &config, &opencode_path)?;
+            println!("{}", output);
+        }
+        BundleCommands::List => {
+            let output = bundle::bundle_list(&config.bundles);
+            println!("{}", output);
+        }
+        BundleCommands::Clear { config_path: occ_path } => {
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = bundle::bundle_clear(&opencode_path)?;
+            println!("{}", output);
+        }
+    }
+
+    Ok(())
+}
+
 async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Some(Commands::Create {
             name,
             output_dir,
             and_add,
+            asset_type,
         }) => {
-            let output = if and_add {
-                cli::create_and_add(name, output_dir).await?
-            } else {
-                cli::create(name, output_dir).await?
+            let output = match asset_type.as_str() {
+                "command" => cli::command::create(name, output_dir).await?,
+                "agent" => cli::agent::create(name, output_dir).await?,
+                _ => {
+                    if and_add {
+                        cli::create_and_add(name, output_dir).await?
+                    } else {
+                        cli::create(name, output_dir).await?
+                    }
+                }
             };
             println!("{}", output);
         }
+        Some(Commands::Bundle { action }) => {
+            bundle_action(action).await?;
+        }
         Some(Commands::Init { local }) => cli::init(local).await?,
-        Some(Commands::Add { repo, branch, tag }) => cli::add(repo, branch, tag).await?,
+        Some(Commands::Add { path }) => cli::add(path).await?,
         Some(Commands::Enable { name }) => cli::enable(name).await?,
         Some(Commands::Disable { name }) => cli::disable(name).await?,
         Some(Commands::Unsync { name }) => cli::unsync(name).await?,
@@ -158,6 +241,16 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Doctor) => cli::api::doctor_skills().await?,
         Some(Commands::Tui) => unreachable!("TUI handled in synchronous entrypoint"),
         Some(Commands::Clean { all }) => cli::api::clean_generated(all).await?,
+        Some(Commands::Config { action }) => match action {
+            ConfigCommands::Set { key, value } => {
+                let output = cli::config_set(key, value).await?;
+                println!("{}", output);
+            }
+            ConfigCommands::Show => {
+                let output = cli::config_show().await?;
+                println!("{}", output);
+            }
+        },
         None => {
             println!("⛏ Skillmine {}", VERSION);
             println!("\nUsage: skillmine <COMMAND>");
@@ -182,12 +275,28 @@ mod tests {
                 name,
                 output_dir,
                 and_add,
+                ..
             }) => {
                 assert_eq!(name, "demo-skill");
                 assert_eq!(output_dir, None);
                 assert!(and_add);
             }
             other => panic!("expected create command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_config_set() {
+        let cli = Cli::parse_from(["skillmine", "config", "set", "workspace", "~/Project/Skills"]);
+
+        match cli.command {
+            Some(Commands::Config {
+                action: ConfigCommands::Set { key, value },
+            }) => {
+                assert_eq!(key, "workspace");
+                assert_eq!(value, "~/Project/Skills");
+            }
+            other => panic!("expected config set command, got {other:?}"),
         }
     }
 }

@@ -1767,6 +1767,7 @@ dependencies = [
  "reqwest",
  "semver",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

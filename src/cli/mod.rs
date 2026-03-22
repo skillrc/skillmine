@@ -1,10 +1,13 @@
 use chrono::Utc;
 use std::path::{Path, PathBuf};
-use crate::lockfile::{lockfile_path_for, LockedSkill, Lockfile};
-use crate::registry::version::resolve_version_source;
+use crate::resolved_state::{lockfile_path_for, LockedSkill, Lockfile};
+use crate::source_refs::version::resolve_version_source;
 
+pub mod agent;
 pub mod api;
+pub mod bundle;
 pub mod commands;
+pub mod command;
 pub mod create;
 pub mod diagnostics;
 pub mod pure;
@@ -22,13 +25,11 @@ struct AddSkillInput {
 }
 
 fn guard_add_skill_input(
-    repo: &str,
-    branch: Option<String>,
-    tag: Option<String>,
+    path: &str,
 ) -> Result<AddSkillInput, Box<dyn std::error::Error>> {
     use crate::config::{ConfigSkill, SkillSource};
 
-    let candidate_path = PathBuf::from(repo);
+    let candidate_path = PathBuf::from(path);
     if candidate_path.exists() {
         let normalized = candidate_path
             .canonicalize()
@@ -37,7 +38,7 @@ fn guard_add_skill_input(
         let skill_name = SkillSource::Local {
             path: path_string.clone(),
         }
-        .skill_name(repo);
+        .skill_name(path);
 
         return Ok(AddSkillInput {
             skill_name: skill_name.clone(),
@@ -50,27 +51,7 @@ fn guard_add_skill_input(
         });
     }
 
-    let (repo_name, path): (String, Option<String>) = crate::pure::parse_github_ref(repo)?;
-
-    let skill_name = path
-        .clone()
-        .unwrap_or_else(|| repo_name.split('/').next_back().unwrap_or(repo).to_string());
-
-    Ok(AddSkillInput {
-        skill_name: skill_name.clone(),
-        skill: ConfigSkill {
-            source: SkillSource::GitHub {
-                repo: repo_name,
-                path,
-                branch,
-                tag,
-                commit: None,
-            },
-            name: Some(skill_name),
-            enabled: true,
-            sync_enabled: true,
-        },
-    })
+    Err(crate::error::SkillmineError::Unsupported("Remote installation from GitHub is no longer supported. Please use local paths.".to_string()).into())
 }
 
 fn effect_write_default_config(config_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -80,14 +61,13 @@ fn effect_write_default_config(config_path: &Path) -> Result<(), Box<dyn std::er
     let default_config = r#"version = "1.0"
 
 [settings]
-concurrency = 5
-timeout = 300
+# workspace = "~/Project/Skills"
 auto_sync = false
 
 [skills]
 # Add your skills here
 # Example:
-# git-commit = { repo = "anthropic/skills", path = "git-release" }
+# my-skill = { path = "~/Project/Skills/my-skill" }
 "#;
 
     std::fs::write(config_path, default_config)?;
@@ -97,7 +77,7 @@ auto_sync = false
 fn emit_init_success(config_path: &Path) {
     println!("✓ Created configuration at {:?}", config_path);
     println!("\nNext steps:");
-    println!("  1. Edit the file to add your skills");
+    println!("  1. Edit the file to add your local skills");
     println!("  2. Run 'skillmine install' to install them");
 }
 
@@ -114,6 +94,53 @@ fn effect_add_skill_to_config(
 fn emit_add_success(skill_name: &str) {
     println!("✓ Added '{}' to skills.toml", skill_name);
     println!("  Run 'skillmine install' to install it");
+}
+
+fn config_path_for_write() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(path) = crate::config::io::find_config() {
+        return Ok(path);
+    }
+
+    Ok(dirs::config_dir()
+        .ok_or("Could not find config directory")?
+        .join("skillmine")
+        .join("skills.toml"))
+}
+
+fn effect_set_config_value(
+    config_path: &Path,
+    key: &str,
+    value: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = if config_path.exists() {
+        crate::config::io::load_config(&config_path.to_path_buf())?
+    } else {
+        crate::config::Config::default()
+    };
+
+    match key {
+        "workspace" => config.settings.workspace = Some(value.to_string()),
+        _ => return Err(format!("Unsupported config key '{}'. Only 'workspace' is supported.", key).into()),
+    }
+
+    let config_dir = config_path.parent().ok_or("Invalid config path")?;
+    std::fs::create_dir_all(config_dir)?;
+    crate::config::io::save_config(&config, &config_path.to_path_buf())?;
+    Ok(())
+}
+
+fn format_config_show(config: &crate::config::Config, config_path: &Path) -> String {
+    let workspace = config
+        .settings
+        .workspace
+        .clone()
+        .unwrap_or_else(|| "<unset>".to_string());
+
+    format!(
+        "Config: {}\nworkspace = {}",
+        config_path.display(),
+        workspace
+    )
 }
 
 
@@ -223,13 +250,13 @@ fn build_locked_skill(
 
             let (resolved_commit, resolved_tree_hash, resolved_reference) = if let Some(commit) = commit {
                 if repo_dir.exists() {
-                    let tree_hash = crate::registry::GitClient::get_path_tree_hash(&repo_dir, path)?;
+                    let tree_hash = crate::source_refs::GitClient::get_path_tree_hash(&repo_dir, path)?;
                     (commit.clone(), tree_hash, commit.clone())
                 } else {
                     return Err(format!("Skill '{}' is pinned but not installed locally; run install first", name).into());
                 }
             } else if repo_dir.exists() {
-                let resolved = crate::registry::GitClient::resolve_source(&resolved_skill.source, &repo_dir)?;
+                let resolved = crate::source_refs::GitClient::resolve_source(&resolved_skill.source, &repo_dir)?;
                 (resolved.commit, resolved.tree_hash, resolved.reference)
             } else {
                 return Err(format!("Skill '{}' is unresolved; run install first before freezing", name).into());
@@ -259,8 +286,8 @@ fn build_locked_skill(
 
             let (resolved_commit, resolved_tree_hash, resolved_reference) =
                 if local_path.join(".git").exists() {
-                    let tree_hash = crate::registry::GitClient::get_path_tree_hash(&local_path, &None)?;
-                    let resolved = crate::registry::GitClient::resolve_local_head(&local_path)?;
+                    let tree_hash = crate::source_refs::GitClient::get_path_tree_hash(&local_path, &None)?;
+                    let resolved = crate::source_refs::GitClient::resolve_local_head(&local_path)?;
                     (resolved.commit, tree_hash, "local-git".to_string())
                 } else {
                     (
@@ -397,40 +424,58 @@ pub async fn init(local: bool) -> Result<(), Box<dyn std::error::Error>> {
 
 
 pub async fn add(
-    repo: String,
-    branch: Option<String>,
-    tag: Option<String>,
+    path: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    add_with_options(repo, branch, tag, true).await.map(|_| ())
+    add_with_options(path, true).await.map(|_| ())
 }
 
 async fn add_with_config_path(
     config_path: PathBuf,
-    repo: String,
-    branch: Option<String>,
-    tag: Option<String>,
+    path: String,
     emit_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let add_skill_input = guard_add_skill_input(&repo, branch, tag)?;
+    let add_skill_input = guard_add_skill_input(&path)?;
     let skill_name = effect_add_skill_to_config(&config_path, add_skill_input)?;
     if emit_output {
         emit_add_success(&skill_name);
     }
 
     Ok(format!(
-        "Added source '{}' to configuration. Next: install to prepare it locally.",
-        skill_name
+        "Added local source '{}' to configuration. Next: install to prepare it locally.",
+        path
     ))
 }
 
 pub async fn add_with_options(
-    repo: String,
-    branch: Option<String>,
-    tag: Option<String>,
+    path: String,
     emit_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let config_path = crate::config::io::find_config()?;
-    add_with_config_path(config_path, repo, branch, tag, emit_output).await
+    add_with_config_path(config_path, path, emit_output).await
+}
+
+pub async fn config_set(
+    key: String,
+    value: String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let config_path = config_path_for_write()?;
+    effect_set_config_value(&config_path, &key, &value)?;
+    Ok(format!(
+        "Updated {} in {}",
+        key,
+        config_path.display()
+    ))
+}
+
+pub async fn config_show() -> Result<String, Box<dyn std::error::Error>> {
+    let config_path = config_path_for_write()?;
+    let config = if config_path.exists() {
+        crate::config::io::load_config(&config_path)?
+    } else {
+        crate::config::Config::default()
+    };
+
+    Ok(format_config_show(&config, &config_path))
 }
 
 pub async fn create_and_add(
@@ -442,8 +487,6 @@ pub async fn create_and_add(
     let add_message = add_with_config_path(
         config_path,
         created.target_dir.to_string_lossy().to_string(),
-        None,
-        None,
         false,
     )
     .await?;
@@ -518,7 +561,7 @@ pub async fn install(force: bool, verbose: bool) -> Result<(), Box<dyn std::erro
         existing_lockfile.clone(),
         store.clone(),
         install_context,
-        config.settings.concurrency,
+        config.skills.len().max(1),
     )
     .await;
 
@@ -629,7 +672,7 @@ pub async fn sync_with_options(
     emit_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     use crate::installer::ContentStore;
-    use crate::registry::GitClient;
+    use crate::source_refs::GitClient;
     use std::os::unix::fs::symlink;
 
     let config_path = crate::config::io::find_config()?;
@@ -949,9 +992,9 @@ pub async fn update(_skill: Option<String>) -> Result<(), Box<dyn std::error::Er
             ) => {
                 let repo_dir = tmp_root()?.join(&locked.name);
                 if repo_dir.exists() {
-                    let resolved = crate::registry::GitClient::resolve_local_head(&repo_dir)?;
+                    let resolved = crate::source_refs::GitClient::resolve_local_head(&repo_dir)?;
                     locked.resolved_commit = resolved.commit.clone();
-                    locked.resolved_tree_hash = crate::registry::GitClient::get_path_tree_hash(
+                    locked.resolved_tree_hash = crate::source_refs::GitClient::get_path_tree_hash(
                         &repo_dir,
                         path,
                     )?;
@@ -968,7 +1011,7 @@ pub async fn update(_skill: Option<String>) -> Result<(), Box<dyn std::error::Er
             (crate::config::SkillSource::Local { path }, "local") => {
                 let local_path = Path::new(path);
                 if local_path.join(".git").exists() {
-                    let resolved = crate::registry::GitClient::resolve_local_head(local_path)?;
+                    let resolved = crate::source_refs::GitClient::resolve_local_head(local_path)?;
                     locked.resolved_commit = resolved.commit;
                     locked.resolved_tree_hash = resolved.tree_hash;
                     locked.resolved_reference = resolved.reference;
