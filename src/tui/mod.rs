@@ -137,10 +137,22 @@ impl Theme {
     /// Get modal title color based on modal type
     fn modal_title_color(&self, title: &str) -> Color {
         match title {
-            "Action Result" => self.success_title,
             "Help" | "Doctor Summary" | "Confirm Action" | "Command Palette" | "Add Skill"
             | "Create Skill" => self.accent,
-            _ => self.error_title,
+            _ => self.success_title,
+        }
+    }
+
+    fn result_border_color(&self, content: &str) -> Color {
+        let lower = content.to_lowercase();
+        if lower.starts_with("error")
+            || lower.starts_with("failed")
+            || lower.contains("\nerror")
+            || lower.starts_with("unknown command")
+        {
+            self.error_title
+        } else {
+            self.success_title
         }
     }
 
@@ -735,7 +747,10 @@ impl ModalRenderer {
         let modal_area = centered_rect(percent_x, percent_y, frame.area());
         let title = self.title(modal_type);
         let body = self.body(modal_type);
-        let title_color = self.theme.modal_title_color(title);
+        let title_color = match modal_type {
+            ModalType::Result(content) => self.theme.result_border_color(content),
+            _ => self.theme.modal_title_color(title),
+        };
 
         let shadow_area = Rect::new(
             modal_area.x.saturating_add(1),
@@ -970,6 +985,10 @@ pub(crate) trait ActionExecutor {
         name: String,
         output_dir: Option<String>,
     ) -> Result<String, Box<dyn std::error::Error>>;
+    fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>>;
+    fn bundle_current_text(&self) -> Result<String, Box<dyn std::error::Error>>;
+    fn model_list_text(&self) -> Result<String, Box<dyn std::error::Error>>;
+    fn model_show_text(&self) -> Result<String, Box<dyn std::error::Error>>;
 }
 
 impl ActionExecutor for api::TuiActionExecutor {
@@ -1039,6 +1058,22 @@ impl ActionExecutor for api::TuiActionExecutor {
         output_dir: Option<String>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         api::TuiActionExecutor::create_skill(self, name, output_dir)
+    }
+
+    fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::bundle_list_text(self)
+    }
+
+    fn bundle_current_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::bundle_current_text(self)
+    }
+
+    fn model_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::model_list_text(self)
+    }
+
+    fn model_show_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::model_show_text(self)
     }
 }
 
@@ -1149,6 +1184,10 @@ impl App {
             ("doctor", "run health diagnostics"),
             ("refresh", "reload skill summaries"),
             ("toggle-target", "cycle sync target"),
+            ("bundle-list", "list all defined bundles"),
+            ("bundle-current", "show active bundle instructions"),
+            ("model-list", "list model profiles"),
+            ("model-show", "show current model configuration"),
             ("help", "show keyboard shortcuts"),
         ];
 
@@ -1344,7 +1383,7 @@ fn run_loop(
                                 app.command_query = name.to_string();
                             }
                             app.command_selected = 0;
-                            run_command(app)?;
+                            run_command(app, action_executor)?;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             let len = app.command_items().len();
@@ -1601,7 +1640,10 @@ fn run_loop(
     }
 }
 
-fn run_command(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+fn run_command(
+    app: &mut App,
+    executor: &impl ActionExecutor,
+) -> Result<(), Box<dyn std::error::Error>> {
     let command = app.command_query.trim().to_lowercase();
     app.mode = AppMode::Normal;
     app.modal_scroll = 0;
@@ -1678,6 +1720,54 @@ fn run_command(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         "toggle-target" => {
             app.sync_target = next_sync_target(&app.sync_target);
             app.status = format!("sync target set to {}", app.sync_target);
+        }
+        "bundle-list" => {
+            match executor.bundle_list_text() {
+                Ok(text) => {
+                    app.modal = Some(Modal::Result(text));
+                    app.status = "bundle list".to_string();
+                }
+                Err(e) => {
+                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                    app.status = "bundle list failed".to_string();
+                }
+            }
+        }
+        "bundle-current" => {
+            match executor.bundle_current_text() {
+                Ok(text) => {
+                    app.modal = Some(Modal::Result(text));
+                    app.status = "bundle current".to_string();
+                }
+                Err(e) => {
+                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                    app.status = "bundle current failed".to_string();
+                }
+            }
+        }
+        "model-list" => {
+            match executor.model_list_text() {
+                Ok(text) => {
+                    app.modal = Some(Modal::Result(text));
+                    app.status = "model list".to_string();
+                }
+                Err(e) => {
+                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                    app.status = "model list failed".to_string();
+                }
+            }
+        }
+        "model-show" => {
+            match executor.model_show_text() {
+                Ok(text) => {
+                    app.modal = Some(Modal::Result(text));
+                    app.status = "model show".to_string();
+                }
+                Err(e) => {
+                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                    app.status = "model show failed".to_string();
+                }
+            }
         }
         "help" => app.modal = Some(Modal::Help),
         "filter" => enter_filter_mode(app),
@@ -2074,6 +2164,26 @@ mod tests {
                 name, name
             ))
         }
+
+        fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push("bundle-list".to_string());
+            Ok("No bundles defined".to_string())
+        }
+
+        fn bundle_current_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push("bundle-current".to_string());
+            Ok("No active bundle (instructions is empty).".to_string())
+        }
+
+        fn model_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push("model-list".to_string());
+            Ok("No model profiles defined. Add [model-profiles.*] to skills.toml.".to_string())
+        }
+
+        fn model_show_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push("model-show".to_string());
+            Ok("Current model: (not set)\n".to_string())
+        }
     }
 
     fn sample_skill(name: &str) -> SkillSummary {
@@ -2311,7 +2421,7 @@ mod tests {
         let mut app = App::new(vec![sample_skill("demo")]);
         app.command_query = "create".to_string();
 
-        run_command(&mut app).unwrap();
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
 
         assert_eq!(app.status, "enter skill name to create");
         assert_eq!(app.mode, AppMode::Create);
@@ -2340,7 +2450,7 @@ mod tests {
         let mut app = App::new(vec![sample_skill("demo")]);
         app.command_query = "enable".to_string();
 
-        run_command(&mut app).unwrap();
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
 
         assert!(matches!(
             &app.modal,
@@ -2354,7 +2464,7 @@ mod tests {
         let mut app = App::new(vec![sample_skill("demo")]);
         app.command_query = "freeze".to_string();
 
-        run_command(&mut app).unwrap();
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
 
         assert!(matches!(
             &app.modal,
@@ -2368,7 +2478,7 @@ mod tests {
         let mut app = App::new(vec![sample_skill("demo")]);
         app.command_query = "info".to_string();
 
-        run_command(&mut app).unwrap();
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
 
         assert!(matches!(
             &app.modal,
@@ -2412,7 +2522,7 @@ mod tests {
         let mut app = App::new(vec![sample_skill("demo")]);
         app.command_query = "disable".to_string();
 
-        run_command(&mut app).unwrap();
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
 
         assert!(matches!(
             &app.modal,
@@ -2426,7 +2536,7 @@ mod tests {
         let mut app = App::new(vec![sample_skill("demo")]);
         app.command_query = "resync".to_string();
 
-        run_command(&mut app).unwrap();
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
 
         assert!(matches!(
             &app.modal,
@@ -2590,5 +2700,58 @@ mod tests {
         let (name, desc) = items[0];
         assert_eq!(name, "create");
         assert!(!desc.is_empty());
+    }
+
+    #[test]
+    fn command_palette_includes_bundle_and_model_commands() {
+        let app = App::new(vec![]);
+        let names: Vec<&str> = app.command_items().iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"bundle-list"));
+        assert!(names.contains(&"bundle-current"));
+        assert!(names.contains(&"model-list"));
+        assert!(names.contains(&"model-show"));
+    }
+
+    #[test]
+    fn run_command_bundle_list_shows_result() {
+        let executor = FakeExecutor::default();
+        let mut app = App::new(vec![]);
+        app.command_query = "bundle-list".to_string();
+
+        run_command(&mut app, &executor).unwrap();
+
+        assert_eq!(executor.calls(), vec!["bundle-list"]);
+        assert_eq!(app.status, "bundle list");
+        assert!(matches!(&app.modal, Some(Modal::Result(_))));
+    }
+
+    #[test]
+    fn run_command_model_show_shows_result() {
+        let executor = FakeExecutor::default();
+        let mut app = App::new(vec![]);
+        app.command_query = "model-show".to_string();
+
+        run_command(&mut app, &executor).unwrap();
+
+        assert_eq!(executor.calls(), vec!["model-show"]);
+        assert_eq!(app.status, "model show");
+        assert!(matches!(&app.modal, Some(Modal::Result(_))));
+    }
+
+    #[test]
+    fn result_border_color_detects_errors() {
+        let theme = Theme::default();
+        assert_eq!(
+            theme.result_border_color("Error: config not found"),
+            theme.error_title
+        );
+        assert_eq!(
+            theme.result_border_color("No bundles defined"),
+            theme.success_title
+        );
+        assert_eq!(
+            theme.result_border_color("Unknown command: foo"),
+            theme.error_title
+        );
     }
 }

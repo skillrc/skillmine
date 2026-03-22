@@ -86,6 +86,22 @@ impl TuiActionExecutor {
     ) -> Result<String, Box<dyn std::error::Error>> {
         self.run(create_skill(name, output_dir))
     }
+
+    pub fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        bundle_list_text()
+    }
+
+    pub fn bundle_current_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        bundle_current_text()
+    }
+
+    pub fn model_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        model_list_text()
+    }
+
+    pub fn model_show_text(&self) -> Result<String, Box<dyn std::error::Error>> {
+        model_show_text()
+    }
 }
 
 pub fn load_skill_summaries() -> Result<Vec<SkillSummary>, Box<dyn std::error::Error>> {
@@ -239,4 +255,34 @@ pub async fn doctor_skills() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn clean_generated(all: bool) -> Result<(), Box<dyn std::error::Error>> {
     super::commands::clean(all).await
+}
+
+pub fn bundle_list_text() -> Result<String, Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    let config = crate::config::io::load_config(&config_path)?;
+    Ok(super::bundle::bundle_list(&config.bundles))
+}
+
+pub fn bundle_current_text() -> Result<String, Box<dyn std::error::Error>> {
+    let opencode_path = default_opencode_config_path();
+    super::bundle::bundle_current(&opencode_path)
+}
+
+pub fn model_list_text() -> Result<String, Box<dyn std::error::Error>> {
+    let config_path = crate::config::io::find_config()?;
+    let config = crate::config::io::load_config(&config_path)?;
+    let opencode_path = default_opencode_config_path();
+    super::model::model_list(&config.model_profiles, &opencode_path)
+}
+
+pub fn model_show_text() -> Result<String, Box<dyn std::error::Error>> {
+    let opencode_path = default_opencode_config_path();
+    super::model::model_show(&opencode_path)
+}
+
+fn default_opencode_config_path() -> std::path::PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+        .join("opencode")
+        .join("config.json")
 }
