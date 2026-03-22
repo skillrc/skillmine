@@ -10,6 +10,7 @@ pub mod commands;
 pub mod command;
 pub mod create;
 pub mod diagnostics;
+pub mod instructions;
 pub mod model;
 pub mod pure;
 pub mod state;

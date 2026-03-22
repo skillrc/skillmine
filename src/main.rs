@@ -48,6 +48,11 @@ enum Commands {
         #[command(subcommand)]
         action: ModelCommands,
     },
+    /// Manage opencode instructions (direct path additions)
+    Instructions {
+        #[command(subcommand)]
+        action: InstructionsCommands,
+    },
     Init {
         #[arg(short, long)]
         local: bool,
@@ -167,6 +172,30 @@ enum ModelCommands {
     },
     /// Show current model configuration
     Show {
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum InstructionsCommands {
+    /// Add a path to instructions
+    Add {
+        path: String,
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    /// Remove a path from instructions
+    Remove {
+        path: String,
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    /// List all instructions
+    List {
         /// Path to opencode config JSON
         #[arg(long)]
         config_path: Option<String>,
@@ -295,6 +324,27 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Model { action }) => {
             model_action(action).await?;
+        }
+        Some(Commands::Instructions { action }) => {
+            use cli::instructions;
+            let occ_path = match &action {
+                InstructionsCommands::Add { config_path, .. } => config_path.clone(),
+                InstructionsCommands::Remove { config_path, .. } => config_path.clone(),
+                InstructionsCommands::List { config_path } => config_path.clone(),
+            };
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = match action {
+                InstructionsCommands::Add { path, .. } => {
+                    instructions::instructions_add(&path, &opencode_path)?
+                }
+                InstructionsCommands::Remove { path, .. } => {
+                    instructions::instructions_remove(&path, &opencode_path)?
+                }
+                InstructionsCommands::List { .. } => {
+                    instructions::instructions_list(&opencode_path)?
+                }
+            };
+            println!("{}", output);
         }
         Some(Commands::Init { local }) => cli::init(local).await?,
         Some(Commands::Add { path }) => cli::add(path).await?,
