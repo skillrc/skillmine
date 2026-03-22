@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::error::{Result, SkillmineError};
 use crate::config::Config;
 use std::fs;
@@ -410,7 +411,7 @@ impl InstallSummary {
 /// Legacy: install many skills (now redirects to sync_skills)
 pub async fn install_many_skills(
     skills: Vec<(String, crate::config::ConfigSkill)>,
-    config: crate::config::Config,
+    _config: crate::config::Config,
     _lockfile: Option<crate::resolved_state::Lockfile>,
     _store: ContentStore,
     _context: InstallContext,

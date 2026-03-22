@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 /// Runtime activation state for a bundle
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BundleActivation {
     pub bundle_name: String,
     pub instructions: Vec<PathBuf>, // Paths to SKILL.md files
@@ -70,6 +71,7 @@ pub fn transform_bundle_activation(
 
 /// Result of applying a bundle
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BundleApplyOutcome {
     pub success: bool,
     pub bundle_name: String,

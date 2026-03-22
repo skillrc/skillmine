@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 /// Waterflow Architecture: Plan object for skill creation
 /// Transform layer produces this, Effect layer consumes it
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CreatePlan {
     pub target_dir: PathBuf,
     pub skill_name: String,
@@ -210,7 +211,7 @@ Describe what this skill does and the outcome it helps produce.
     )
 }
 
-fn transform_skill_readme(name: &str, skill_dir: &Path) -> String {
+fn transform_skill_readme(name: &str, _skill_dir: &Path) -> String {
     format!(
         r#"# {name}
 
@@ -285,6 +286,7 @@ fn observe_effect_completed(target_dir: &Path) {
 // ============================================================================
 
 /// Synchronous entry point - returns plan for inspection/testing
+#[allow(dead_code)]
 pub(crate) fn transform_create_plan_entry(
     name: String,
     output_dir: Option<String>,

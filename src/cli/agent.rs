@@ -1,14 +1,15 @@
-use chrono::Utc;
 use std::path::{Path, PathBuf};
 
 /// Waterflow Architecture: Plan object for agent creation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CreateAgentPlan {
     pub target_dir: PathBuf,
     pub agent_name: String,
     pub files: Vec<(PathBuf, String)>,
 }
 
+#[allow(dead_code)]
 pub struct CreatedAgent {
     pub target_dir: PathBuf,
     pub message: String,

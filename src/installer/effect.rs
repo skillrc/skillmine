@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::error::{Result, SkillmineError};
 use std::fs;
 use std::path::{Path, PathBuf};

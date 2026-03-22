@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ConfigSkill;
 use crate::installer::ContentStore;
-use crate::lockfile::{LockedSkill, Lockfile};
+use crate::resolved_state::{LockedSkill, Lockfile};
+use crate::source_refs::GitClient;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillStatus {
@@ -26,11 +27,12 @@ pub enum OutdatedState {
     SourceMismatch,
 }
 
+#[allow(dead_code)]
 pub fn broken_tmp_repo_path(skill: &ConfigSkill, tmp_root: &Path, name: &str) -> Option<PathBuf> {
     match &skill.source {
         crate::config::SkillSource::GitHub { .. } => {
             let repo_dir = tmp_root.join(name);
-            if repo_dir.exists() && !crate::registry::GitClient::has_resolvable_head(&repo_dir) {
+            if repo_dir.exists() && !GitClient::has_resolvable_head(&repo_dir) {
                 Some(repo_dir)
             } else {
                 None
@@ -56,7 +58,7 @@ pub fn skill_statuses(
         statuses.push(SkillStatus::Unsynced);
         return statuses;
     }
-    let locked_skill = lockfile.and_then(|lock| lock.get_skill(name));
+    let locked_skill = lockfile.and_then(|lock: &Lockfile| lock.get_skill(name));
 
     let installed_path = match &skill.source {
         crate::config::SkillSource::GitHub {
@@ -125,11 +127,10 @@ pub fn classify_outdated(skill: &ConfigSkill, locked: Option<&LockedSkill>) -> O
                     None => return OutdatedState::TmpMissing,
                 };
 
-                if !tmp_repo.exists() || !crate::registry::GitClient::has_resolvable_head(&tmp_repo)
-                {
+                if !tmp_repo.exists() || !GitClient::has_resolvable_head(&tmp_repo) {
                     OutdatedState::TmpMissing
                 } else {
-                    match crate::registry::GitClient::resolve_local_head(&tmp_repo) {
+                    match GitClient::resolve_local_head(&tmp_repo) {
                         Ok(resolved)
                             if resolved.commit == locked.resolved_commit
                                 && resolved.tree_hash == locked.resolved_tree_hash =>
@@ -152,9 +153,9 @@ pub fn classify_outdated(skill: &ConfigSkill, locked: Option<&LockedSkill>) -> O
             }
         }
         (crate::config::SkillSource::Local { path }, "local") => {
-            let local_path = Path::new(path);
+            let local_path = Path::new(&path);
             if local_path.join(".git").exists() {
-                match crate::registry::GitClient::resolve_local_head(local_path) {
+                match GitClient::resolve_local_head(local_path) {
                     Ok(resolved) => {
                         if resolved.commit == locked.resolved_commit
                             && resolved.tree_hash == locked.resolved_tree_hash
