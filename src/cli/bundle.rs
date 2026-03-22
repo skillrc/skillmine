@@ -204,6 +204,106 @@ pub fn bundle_list(bundles: &BundleRegistry) -> String {
     emit_bundle_list(bundles)
 }
 
+/// Read current instructions from opencode.json and show them
+pub fn bundle_current(
+    opencode_config_path: &PathBuf,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if !opencode_config_path.exists() {
+        return Ok("No opencode config found. No bundle is active.".to_string());
+    }
+
+    let content = std::fs::read_to_string(opencode_config_path)?;
+    let opencode_config: serde_json::Value = serde_json::from_str(&content)?;
+
+    let instructions = opencode_config
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if instructions.is_empty() {
+        return Ok("No active bundle (instructions is empty).".to_string());
+    }
+
+    let mut output = format!("Active instructions ({}):\n", instructions.len());
+    for instr in &instructions {
+        if let Some(s) = instr.as_str() {
+            output.push_str(&format!("  {}\n", s));
+        }
+    }
+
+    if let Some(model) = opencode_config.get("model").and_then(|v| v.as_str()) {
+        output.push_str(&format!("\nModel: {}\n", model));
+    }
+
+    Ok(output)
+}
+
+/// Save current opencode.json instructions as a named bundle to skills.toml
+pub fn bundle_save(
+    bundle_name: &str,
+    description: &str,
+    opencode_config_path: &PathBuf,
+    skillmine_config_path: &PathBuf,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // Guard
+    if bundle_name.is_empty() {
+        return Err("Bundle name cannot be empty".into());
+    }
+
+    // Read current opencode.json
+    if !opencode_config_path.exists() {
+        return Err("No opencode config found. Nothing to save.".into());
+    }
+    let content = std::fs::read_to_string(opencode_config_path)?;
+    let opencode_config: serde_json::Value = serde_json::from_str(&content)?;
+
+    let instructions = opencode_config
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if instructions.is_empty() {
+        return Err("No active instructions in opencode.json. Nothing to save.".into());
+    }
+
+    // Derive skill names from instruction paths (basename of parent dir)
+    let skills: Vec<String> = instructions
+        .iter()
+        .filter_map(|v| v.as_str())
+        .filter_map(|path| {
+            std::path::Path::new(path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    // Load and update skills.toml
+    let mut config = crate::config::io::load_config(skillmine_config_path)?;
+    config.bundles.insert(
+        bundle_name.to_string(),
+        BundleSpec {
+            description: description.to_string(),
+            skills,
+            commands: vec![],
+            agents: vec![],
+            model_profile: opencode_config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        },
+    );
+    crate::config::io::save_config(&config, skillmine_config_path)?;
+
+    Ok(format!(
+        "Saved current state as bundle '{}'.\nEdit [bundles.{}] in skills.toml to refine.",
+        bundle_name, bundle_name
+    ))
+}
+
 pub fn bundle_clear(opencode_config_path: &PathBuf) -> Result<String, Box<dyn std::error::Error>> {
     // Backup
     let backup_path = opencode_config_path.with_extension("json.bak");

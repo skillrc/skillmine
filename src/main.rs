@@ -43,6 +43,11 @@ enum Commands {
         #[command(subcommand)]
         action: BundleCommands,
     },
+    /// Manage model profiles
+    Model {
+        #[command(subcommand)]
+        action: ModelCommands,
+    },
     Init {
         #[arg(short, long)]
         local: bool,
@@ -122,9 +127,47 @@ enum BundleCommands {
     },
     /// List all defined bundles
     List,
+    /// Show currently active instructions in opencode config
+    Current {
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    /// Save current opencode instructions as a named bundle
+    Save {
+        name: String,
+        #[arg(short, long, default_value = "")]
+        description: String,
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
     /// Deactivate current bundle (clear instructions)
     Clear {
         /// Path to opencode config JSON (default: ~/.config/opencode/config.json)
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ModelCommands {
+    /// Switch to a named model profile
+    Use {
+        profile: String,
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    /// List all defined model profiles
+    List {
+        /// Path to opencode config JSON
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+    /// Show current model configuration
+    Show {
+        /// Path to opencode config JSON
         #[arg(long)]
         config_path: Option<String>,
     },
@@ -172,18 +215,53 @@ async fn bundle_action(action: BundleCommands) -> Result<(), Box<dyn std::error:
 
     match action {
         BundleCommands::Apply { name, config_path: occ_path } => {
-            let bundles = &config.bundles;
             let opencode_path = default_opencode_config_path(occ_path);
-            let output = bundle::bundle_apply(&name, bundles, &config, &opencode_path)?;
+            let output = bundle::bundle_apply(&name, &config.bundles, &config, &opencode_path)?;
             println!("{}", output);
         }
         BundleCommands::List => {
-            let output = bundle::bundle_list(&config.bundles);
+            println!("{}", bundle::bundle_list(&config.bundles));
+        }
+        BundleCommands::Current { config_path: occ_path } => {
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = bundle::bundle_current(&opencode_path)?;
+            println!("{}", output);
+        }
+        BundleCommands::Save { name, description, config_path: occ_path } => {
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = bundle::bundle_save(&name, &description, &opencode_path, &config_path)?;
             println!("{}", output);
         }
         BundleCommands::Clear { config_path: occ_path } => {
             let opencode_path = default_opencode_config_path(occ_path);
             let output = bundle::bundle_clear(&opencode_path)?;
+            println!("{}", output);
+        }
+    }
+
+    Ok(())
+}
+
+async fn model_action(action: ModelCommands) -> Result<(), Box<dyn std::error::Error>> {
+    use cli::model;
+
+    let config_path = crate::config::io::find_config()?;
+    let config = crate::config::io::load_config(&config_path)?;
+
+    match action {
+        ModelCommands::Use { profile, config_path: occ_path } => {
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = model::model_use(&profile, &config.model_profiles, &opencode_path)?;
+            println!("{}", output);
+        }
+        ModelCommands::List { config_path: occ_path } => {
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = model::model_list(&config.model_profiles, &opencode_path)?;
+            println!("{}", output);
+        }
+        ModelCommands::Show { config_path: occ_path } => {
+            let opencode_path = default_opencode_config_path(occ_path);
+            let output = model::model_show(&opencode_path)?;
             println!("{}", output);
         }
     }
@@ -214,6 +292,9 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Bundle { action }) => {
             bundle_action(action).await?;
+        }
+        Some(Commands::Model { action }) => {
+            model_action(action).await?;
         }
         Some(Commands::Init { local }) => cli::init(local).await?,
         Some(Commands::Add { path }) => cli::add(path).await?,

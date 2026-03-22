@@ -275,6 +275,17 @@ impl Serialize for ConfigSkill {
     }
 }
 
+/// A model configuration profile
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub small_model: Option<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
 /// A named collection of skills, commands, and agents for workflow activation
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BundleSpec {
@@ -308,6 +319,8 @@ pub struct Config {
     pub skills: BTreeMap<String, ConfigSkill>,
     #[serde(default)]
     pub bundles: BTreeMap<String, BundleSpec>,
+    #[serde(default, rename = "model-profiles")]
+    pub model_profiles: BTreeMap<String, ModelProfile>,
 }
 
 impl Config {
@@ -390,6 +403,7 @@ impl Default for Config {
             registry: BTreeMap::new(),
             skills: BTreeMap::new(),
             bundles: BTreeMap::new(),
+            model_profiles: BTreeMap::new(),
         }
     }
 }
