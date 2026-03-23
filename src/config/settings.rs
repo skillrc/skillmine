@@ -318,6 +318,10 @@ pub struct Config {
     #[serde(default)]
     pub skills: BTreeMap<String, ConfigSkill>,
     #[serde(default)]
+    pub agents: BTreeMap<String, ConfigSkill>,
+    #[serde(default)]
+    pub commands: BTreeMap<String, ConfigSkill>,
+    #[serde(default)]
     pub bundles: BTreeMap<String, BundleSpec>,
     #[serde(default, rename = "model-profiles")]
     pub model_profiles: BTreeMap<String, ModelProfile>,
@@ -336,6 +340,14 @@ impl Config {
 
     pub fn add_skill(&mut self, name: impl Into<String>, skill: ConfigSkill) {
         self.skills.insert(name.into(), skill);
+    }
+
+    pub fn add_agent(&mut self, name: impl Into<String>, agent: ConfigSkill) {
+        self.agents.insert(name.into(), agent);
+    }
+
+    pub fn add_command(&mut self, name: impl Into<String>, command: ConfigSkill) {
+        self.commands.insert(name.into(), command);
     }
 
     #[allow(dead_code)]
@@ -402,6 +414,8 @@ impl Default for Config {
             settings: Settings::default(),
             registry: BTreeMap::new(),
             skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            commands: BTreeMap::new(),
             bundles: BTreeMap::new(),
             model_profiles: BTreeMap::new(),
         }

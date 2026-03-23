@@ -180,7 +180,7 @@ fn effect_execute_create_plan(plan: &CreateCommandPlan) -> Result<(), Box<dyn st
 fn emit_create_success(target_dir: &Path) -> String {
     let path = target_dir.display();
     format!(
-        "Created command at {}\nAutomatically registered and ready to sync.",
+        "Created command at {}\n\nNext steps:\n  skillmine sync --target opencode",
         path
     )
 }
@@ -219,6 +219,7 @@ pub(crate) fn create_created_command(
     })
 }
 
+#[allow(dead_code)]
 pub async fn create(
     name: String,
     output_dir: Option<String>,

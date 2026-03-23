@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::io::Write;
 use std::process;
 
 mod cli;
@@ -56,6 +57,9 @@ enum Commands {
     Init {
         #[arg(short, long)]
         local: bool,
+        /// Skip interactive wizard and use defaults
+        #[arg(short, long)]
+        yes: bool,
     },
     Add {
         path: String,
@@ -71,12 +75,6 @@ enum Commands {
     },
     Resync {
         name: String,
-    },
-    Install {
-        #[arg(short, long)]
-        force: bool,
-        #[arg(short, long)]
-        verbose: bool,
     },
     Sync {
         #[arg(short, long)]
@@ -95,6 +93,12 @@ enum Commands {
     },
     Remove {
         name: String,
+        /// Skip confirmation prompt (for scripting)
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Keep synced symlinks, only remove from config registration
+        #[arg(long)]
+        keep_synced: bool,
     },
     Info {
         name: String,
@@ -303,20 +307,10 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Create {
             name,
             output_dir,
-            and_add,
+            and_add: _,
             asset_type,
         }) => {
-            let output = match asset_type.as_str() {
-                "command" => cli::command::create(name, output_dir).await?,
-                "agent" => cli::agent::create(name, output_dir).await?,
-                _ => {
-                    if and_add {
-                        cli::create_and_add(name, output_dir).await?
-                    } else {
-                        cli::create(name, output_dir).await?
-                    }
-                }
-            };
+            let output = cli::create_asset_and_add(name, output_dir, &asset_type).await?;
             println!("{}", output);
         }
         Some(Commands::Bundle { action }) => {
@@ -346,13 +340,12 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             };
             println!("{}", output);
         }
-        Some(Commands::Init { local }) => cli::init(local).await?,
+        Some(Commands::Init { local, .. }) => cli::init(local).await?,
         Some(Commands::Add { path }) => cli::add(path).await?,
         Some(Commands::Enable { name }) => cli::enable(name).await?,
         Some(Commands::Disable { name }) => cli::disable(name).await?,
         Some(Commands::Unsync { name }) => cli::unsync(name).await?,
         Some(Commands::Resync { name }) => cli::resync(name).await?,
-        Some(Commands::Install { force, verbose }) => cli::install(force, verbose).await?,
         Some(Commands::Sync { target, path }) => {
             let _ = cli::sync(target, path).await?;
         }
@@ -360,7 +353,19 @@ async fn run_async(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Thaw) => cli::thaw().await?,
         Some(Commands::List { detailed }) => cli::list(detailed).await?,
         Some(Commands::Update { skill }) => cli::update(skill).await?,
-        Some(Commands::Remove { name }) => cli::remove(name).await?,
+        Some(Commands::Remove { name, yes, keep_synced }) => {
+            if !yes {
+                eprint!("Remove '{}' from config? This cannot be undone. [y/N] ", name);
+                std::io::stderr().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+            cli::remove(name, keep_synced).await?;
+        }
         Some(Commands::Info { name }) => {
             let output = cli::api::info_skill(name).await?;
             println!("{}", output);

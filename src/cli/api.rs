@@ -23,10 +23,6 @@ impl TuiActionExecutor {
         self.run(add_skill(repo))
     }
 
-    pub fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-        self.run(install_skill(name))
-    }
-
     pub fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
         self.run(update_skill(name))
     }
@@ -87,6 +83,10 @@ impl TuiActionExecutor {
         self.run(create_skill(name, output_dir))
     }
 
+    pub fn init_config(&self) -> Result<String, Box<dyn std::error::Error>> {
+        self.run(init_config())
+    }
+
     pub fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
         bundle_list_text()
     }
@@ -116,11 +116,12 @@ pub async fn create_skill(
     name: String,
     output_dir: Option<String>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    super::create(name, output_dir).await
+    super::create_asset_and_add(name, output_dir, "skill").await
 }
 
-pub async fn install_skill(name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    super::install_selected(name, false, false).await
+pub async fn init_config() -> Result<String, Box<dyn std::error::Error>> {
+    super::init(false).await?;
+    Ok("Initialized configuration. Welcome to Skillmine.".to_string())
 }
 
 pub async fn update_skill(name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -131,7 +132,7 @@ pub async fn sync_skills(target: String) -> Result<String, Box<dyn std::error::E
     let summary_target = target.clone();
     super::sync_with_options(target, None, false)
         .await
-        .map(|_| format!("Synced configured skills to the {} runtime target.", summary_target))
+        .map(|_| format!("Synced configured assets to the {} runtime target.", summary_target))
 }
 
 #[cfg(test)]
@@ -141,7 +142,7 @@ pub async fn sync_skills_report_only(target: String) -> Result<String, Box<dyn s
 }
 
 pub async fn remove_skill(name: String) -> Result<(), Box<dyn std::error::Error>> {
-    super::remove(name).await
+    super::remove(name, false).await
 }
 
 pub async fn doctor_summary_text() -> Result<String, Box<dyn std::error::Error>> {

@@ -10,6 +10,7 @@ use super::state::{classify_outdated, format_statuses, skill_statuses};
 #[derive(Debug, Clone)]
 pub struct SkillSummary {
     pub name: String,
+    pub asset_type: String,
     pub source: String,
     pub enabled: bool,
     pub statuses: Vec<String>,
@@ -42,6 +43,7 @@ pub fn load_manifest_for_config_skill(
     }
 }
 
+#[allow(dead_code)]
 pub fn apply_manifest_to_locked_skill(
     locked_skill: &mut LockedSkill,
     manifest: &crate::manifest::SkillManifest,
@@ -69,6 +71,7 @@ pub fn skill_summary(
 
     SkillSummary {
         name: name.to_string(),
+        asset_type: "skill".to_string(),
         source: describe_skill_source(skill),
         enabled: skill.enabled,
         statuses: format_statuses(&statuses)
@@ -89,4 +92,17 @@ pub fn skill_summary(
             .as_ref()
             .map(|entry| entry.skill.description.clone()),
     }
+}
+
+pub fn asset_summary(
+    name: &str,
+    asset_type: &str,
+    skill: &ConfigSkill,
+    lockfile: Option<&Lockfile>,
+    tmp_root: &Path,
+    store: &ContentStore,
+) -> SkillSummary {
+    let mut summary = skill_summary(name, skill, lockfile, tmp_root, store);
+    summary.asset_type = asset_type.to_string();
+    summary
 }

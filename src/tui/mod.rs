@@ -253,7 +253,7 @@ impl<'a> SkillList<'a> {
                 Block::default()
                     .title(Span::styled(
                         format!(
-                            "Skills ({}/{}) ",
+                            "Assets ({}/{}) ",
                             self.filtered_indices.len(),
                             self.skills.len()
                         ),
@@ -535,8 +535,8 @@ impl<'a> DetailPanel<'a> {
             ]),
             Line::from(vec![
                 Span::styled("  3. ", self.theme.highlight_style()),
-                Span::styled("Install from config:    ", self.theme.muted_style()),
-                Span::styled("skillmine install", self.theme.info_style()),
+                Span::styled("Sync to opencode:       ", self.theme.muted_style()),
+                Span::styled("skillmine sync --target opencode", self.theme.info_style()),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -729,6 +729,7 @@ enum ModalType {
     CreateSkill {
         input: String,
     },
+    Wizard(WizardState),
 }
 
 struct ModalRenderer {
@@ -749,7 +750,7 @@ impl ModalRenderer {
         let body = self.body(modal_type);
         let title_color = match modal_type {
             ModalType::Result(content) => self.theme.result_border_color(content),
-            _ => self.theme.modal_title_color(title),
+            _ => self.theme.modal_title_color(&title),
         };
 
         let shadow_area = Rect::new(
@@ -803,6 +804,7 @@ impl ModalRenderer {
             ModalType::AddSkill { .. } | ModalType::CreateSkill { .. } => {
                 "Enter confirm  Esc cancel"
             }
+            ModalType::Wizard(_) => "Enter continue  Esc cancel  \u{2191}/\u{2193} navigate",
         };
 
         frame.render_widget(
@@ -822,15 +824,22 @@ impl ModalRenderer {
         frame.render_widget(shadow, area);
     }
 
-    fn title(&self, modal_type: &ModalType) -> &'static str {
+    fn title(&self, modal_type: &ModalType) -> String {
         match modal_type {
-            ModalType::Help => "Help",
-            ModalType::Confirm(_) => "Confirm Action",
-            ModalType::Doctor(_) => "Doctor Summary",
-            ModalType::Result(_) => "Action Result",
-            ModalType::CommandPalette { .. } => "Command Palette",
-            ModalType::AddSkill { .. } => "Add Skill",
-            ModalType::CreateSkill { .. } => "Create Skill",
+            ModalType::Help => "Help".to_string(),
+            ModalType::Confirm(_) => "Confirm Action".to_string(),
+            ModalType::Doctor(_) => "Doctor Summary".to_string(),
+            ModalType::Result(_) => "Action Result".to_string(),
+            ModalType::CommandPalette { .. } => "Command Palette".to_string(),
+            ModalType::AddSkill { .. } => "Add Skill".to_string(),
+            ModalType::CreateSkill { .. } => "Create Skill".to_string(),
+            ModalType::Wizard(state) => match state.step {
+                WizardStep::Welcome => "Welcome to Skillmine".to_string(),
+                WizardStep::ConfigLocation => "Configuration Location".to_string(),
+                WizardStep::WorkspaceSetup => "Workspace Setup".to_string(),
+                WizardStep::AutoSyncConfirm => "Auto-Sync Settings".to_string(),
+                WizardStep::Summary => "Setup Summary".to_string(),
+            },
         }
     }
 
@@ -851,6 +860,71 @@ impl ModalRenderer {
             ModalType::CreateSkill { input } => {
                 format!("Enter new skill name:\n{}", input)
             }
+            ModalType::Wizard(state) => self.wizard_body(state),
+        }
+    }
+
+    fn wizard_body(&self, state: &WizardState) -> String {
+        match &state.step {
+            WizardStep::Welcome => {
+                "Welcome to Skillmine! 👋\n\n\
+                Skillmine helps you manage AI assets:\n\
+                • Skills - Domain knowledge modules\n\
+                • Agents - Role-based assistants\n\
+                • Commands - Slash-style shortcuts\n\n\
+                Let's set up your configuration.".to_string()
+            }
+            WizardStep::ConfigLocation => {
+                let global = if state.selected_option == 0 { "▶ " } else { "  " };
+                let local = if state.selected_option == 1 { "▶ " } else { "  " };
+                format!(
+                    "Where would you like to store your configuration?\n\n\
+                    {}[1] Global config (~/.config/skillmine/)\n\
+                    {}   Available across all projects\n\n\
+                    {}[2] Project config (./skills.toml)\n\
+                    {}   Specific to this directory\n\n\
+                    Use ↑/↓ to select",
+                    global, global, local, local
+                )
+            }
+            WizardStep::WorkspaceSetup => {
+                format!(
+                    "Set your workspace directory:\n\n\
+                    This is where new assets will be created.\n\n\
+                    Workspace: {}\n\n\
+                    Type to edit, Enter to confirm",
+                    state.workspace_input
+                )
+            }
+            WizardStep::AutoSyncConfirm => {
+                let yes = if state.selected_option == 0 { "▶ " } else { "  " };
+                let no = if state.selected_option == 1 { "▶ " } else { "  " };
+                format!(
+                    "Enable auto-sync?\n\n\
+                    When enabled, assets are automatically synced\n\
+                    to OpenCode when you add or remove them.\n\n\
+                    {}[Y] Yes - Auto-sync enabled\n\
+                    {}[N] No - Manual sync only\n\n\
+                    Use ↑/↓ to select",
+                    yes, no
+                )
+            }
+            WizardStep::Summary => {
+                let config_type = if state.use_local_config {
+                    "Project config (./skills.toml)"
+                } else {
+                    "Global config (~/.config/skillmine/)"
+                };
+                let auto_sync = if state.enable_auto_sync { "Enabled" } else { "Disabled" };
+                format!(
+                    "Configuration Summary:\n\n\
+                    Location: {}\n\
+                    Workspace: {}\n\
+                    Auto-sync: {}\n\n\
+                    Press Enter to create configuration",
+                    config_type, state.workspace_input, auto_sync
+                )
+            }
         }
     }
 
@@ -862,6 +936,7 @@ impl ModalRenderer {
             ModalType::CommandPalette { .. } => (60, 35),
             ModalType::AddSkill { .. } | ModalType::CreateSkill { .. } => (70, 20),
             ModalType::Confirm(_) => (60, 20),
+            ModalType::Wizard(_) => (70, 25),
         }
     }
 
@@ -916,6 +991,7 @@ impl ModalRenderer {
 
 struct App {
     skills: Vec<SkillSummary>,
+    config_missing: bool,
     selected: usize,
     status: String,
     mode: AppMode,
@@ -941,7 +1017,6 @@ enum PendingAction {
     Info,
     Outdated,
     Clean,
-    Install,
     Update,
     Sync,
     Remove,
@@ -957,16 +1032,35 @@ enum AppMode {
     Command,
 }
 
+#[derive(Clone)]
 enum Modal {
     Help,
     Confirm(PendingAction),
     Doctor(String),
     Result(String),
+    Wizard(WizardState),
+}
+
+#[derive(Debug, Clone)]
+enum WizardStep {
+    Welcome,
+    ConfigLocation,
+    WorkspaceSetup,
+    AutoSyncConfirm,
+    Summary,
+}
+
+#[derive(Debug, Clone)]
+struct WizardState {
+    step: WizardStep,
+    use_local_config: bool,
+    workspace_input: String,
+    enable_auto_sync: bool,
+    selected_option: usize,
 }
 
 pub(crate) trait ActionExecutor {
     fn add_skill(&self, repo: String) -> Result<String, Box<dyn std::error::Error>>;
-    fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>>;
     fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>>;
     fn sync_skills(&self, target: String) -> Result<String, Box<dyn std::error::Error>>;
     fn remove_skill(&self, name: String) -> Result<(), Box<dyn std::error::Error>>;
@@ -985,6 +1079,7 @@ pub(crate) trait ActionExecutor {
         name: String,
         output_dir: Option<String>,
     ) -> Result<String, Box<dyn std::error::Error>>;
+    fn init_config(&self) -> Result<String, Box<dyn std::error::Error>>;
     fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>>;
     fn bundle_current_text(&self) -> Result<String, Box<dyn std::error::Error>>;
     fn model_list_text(&self) -> Result<String, Box<dyn std::error::Error>>;
@@ -994,10 +1089,6 @@ pub(crate) trait ActionExecutor {
 impl ActionExecutor for api::TuiActionExecutor {
     fn add_skill(&self, repo: String) -> Result<String, Box<dyn std::error::Error>> {
         api::TuiActionExecutor::add_skill(self, repo)
-    }
-
-    fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-        api::TuiActionExecutor::install_skill(self, name)
     }
 
     fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -1060,6 +1151,10 @@ impl ActionExecutor for api::TuiActionExecutor {
         api::TuiActionExecutor::create_skill(self, name, output_dir)
     }
 
+    fn init_config(&self) -> Result<String, Box<dyn std::error::Error>> {
+        api::TuiActionExecutor::init_config(self)
+    }
+
     fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
         api::TuiActionExecutor::bundle_list_text(self)
     }
@@ -1077,10 +1172,25 @@ impl ActionExecutor for api::TuiActionExecutor {
     }
 }
 
+impl WizardState {
+    fn new() -> Self {
+        Self {
+            step: WizardStep::Welcome,
+            use_local_config: false,
+            workspace_input: dirs::home_dir()
+                .map(|h| h.join("Project").join("Skills").to_string_lossy().to_string())
+                .unwrap_or_else(|| "~/Project/Skills".to_string()),
+            enable_auto_sync: true,
+            selected_option: 0,
+        }
+    }
+}
+
 impl App {
     fn new(skills: Vec<SkillSummary>) -> Self {
         Self {
             skills,
+            config_missing: false,
             selected: 0,
             status: String::new(),
             mode: AppMode::Normal,
@@ -1183,6 +1293,9 @@ impl App {
             ("clean", "remove cache or tmp state"),
             ("doctor", "run health diagnostics"),
             ("refresh", "reload skill summaries"),
+            ("list-skills", "filter assets to skills"),
+            ("list-agents", "filter assets to agents"),
+            ("list-commands", "filter assets to commands"),
             ("toggle-target", "cycle sync target"),
             ("bundle-list", "list all defined bundles"),
             ("bundle-current", "show active bundle instructions"),
@@ -1206,13 +1319,17 @@ impl App {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ParsedFilter {
     text_terms: Vec<String>,
+    asset_type: Option<String>,
     source: Option<String>,
     status: Option<String>,
 }
 
 impl ParsedFilter {
     fn is_empty(&self) -> bool {
-        self.text_terms.is_empty() && self.source.is_none() && self.status.is_none()
+        self.text_terms.is_empty()
+            && self.asset_type.is_none()
+            && self.source.is_none()
+            && self.status.is_none()
     }
 }
 
@@ -1223,6 +1340,13 @@ fn parse_filter_query(query: &str) -> ParsedFilter {
         if let Some(source) = token.strip_prefix("source:") {
             if !source.is_empty() {
                 parsed.source = Some(source.to_lowercase());
+            }
+            continue;
+        }
+
+        if let Some(asset_type) = token.strip_prefix("type:") {
+            if !asset_type.is_empty() {
+                parsed.asset_type = Some(asset_type.to_lowercase());
             }
             continue;
         }
@@ -1241,6 +1365,12 @@ fn parse_filter_query(query: &str) -> ParsedFilter {
 }
 
 fn skill_matches_filter(skill: &SkillSummary, filter: &ParsedFilter) -> bool {
+    if let Some(asset_type) = &filter.asset_type {
+        if skill.asset_type.to_lowercase() != *asset_type {
+            return false;
+        }
+    }
+
     if let Some(source) = &filter.source {
         if !skill.source.to_lowercase().contains(source) {
             return false;
@@ -1259,6 +1389,7 @@ fn skill_matches_filter(skill: &SkillSummary, filter: &ParsedFilter) -> bool {
 
     filter.text_terms.iter().all(|needle| {
         skill.name.to_lowercase().contains(needle)
+            || skill.asset_type.to_lowercase().contains(needle)
             || skill.source.to_lowercase().contains(needle)
             || skill.outdated.to_lowercase().contains(needle)
             || skill
@@ -1274,13 +1405,21 @@ fn skill_matches_filter(skill: &SkillSummary, filter: &ParsedFilter) -> bool {
 }
 
 pub(crate) fn run(action_executor: &impl ActionExecutor) -> Result<(), Box<dyn std::error::Error>> {
-    let skills = api::load_skill_summaries()?;
+    let (skills, config_missing) = match api::load_skill_summaries() {
+        Ok(skills) => (skills, false),
+        Err(_) => (Vec::new(), true),
+    };
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let mut app = App::new(skills);
+    app.config_missing = config_missing;
+    if app.config_missing {
+        app.modal = Some(Modal::Wizard(WizardState::new()));
+        app.status = "first-run setup: press Enter to continue".to_string();
+    }
 
     let result = run_loop(&mut terminal, &mut app, action_executor);
 
@@ -1314,7 +1453,7 @@ fn run_loop(
 
             let detail_panel = if let Some(skill) = app.selected_filtered_skill() {
                 DetailPanel::for_skill(skill, app.detail_scroll)
-            } else if app.skills.is_empty() && app.filter_query.is_empty() {
+            } else if app.config_missing && app.filter_query.is_empty() {
                 DetailPanel::empty_guide()
             } else {
                 DetailPanel::no_skills()
@@ -1329,6 +1468,7 @@ fn run_loop(
                 Some(Modal::Help) => Some(ModalType::Help),
                 Some(Modal::Doctor(output)) => Some(ModalType::Doctor(output.clone())),
                 Some(Modal::Result(output)) => Some(ModalType::Result(output.clone())),
+                Some(Modal::Wizard(state)) => Some(ModalType::Wizard(state.clone())),
                 None => None,
             };
 
@@ -1385,13 +1525,13 @@ fn run_loop(
                             app.command_selected = 0;
                             run_command(app, action_executor)?;
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Down => {
                             let len = app.command_items().len();
                             if len > 0 {
                                 app.command_selected = (app.command_selected + 1).min(len - 1);
                             }
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Up => {
                             app.command_selected = app.command_selected.saturating_sub(1);
                         }
                         KeyCode::Backspace => {
@@ -1459,6 +1599,8 @@ fn run_loop(
                                 app.modal_scroll = 0;
                                 app.status = format!("created {}", name);
                                 app.modal = Some(Modal::Result(report));
+                                app.config_missing = false;
+                                app.refresh();
                             }
                         }
                         KeyCode::Backspace => {
@@ -1482,6 +1624,80 @@ fn run_loop(
                         KeyCode::Down => app.modal_scroll = app.modal_scroll.saturating_add(1),
                         KeyCode::PageUp => app.modal_scroll = app.modal_scroll.saturating_sub(10),
                         KeyCode::PageDown => app.modal_scroll = app.modal_scroll.saturating_add(10),
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                if let Some(Modal::Wizard(mut state)) = app.modal.clone() {
+                    match key.code {
+                        KeyCode::Esc => return Ok(()),
+                        KeyCode::Enter => {
+                            match state.step {
+                                WizardStep::Welcome => {
+                                    state.step = WizardStep::ConfigLocation;
+                                    state.selected_option = 0;
+                                    app.modal = Some(Modal::Wizard(state));
+                                    app.status = "select config location".to_string();
+                                }
+                                WizardStep::ConfigLocation => {
+                                    state.use_local_config = state.selected_option == 1;
+                                    state.step = WizardStep::WorkspaceSetup;
+                                    app.modal = Some(Modal::Wizard(state));
+                                    app.status = "configure workspace".to_string();
+                                }
+                                WizardStep::WorkspaceSetup => {
+                                    state.step = WizardStep::AutoSyncConfirm;
+                                    state.selected_option = if state.enable_auto_sync { 0 } else { 1 };
+                                    app.modal = Some(Modal::Wizard(state));
+                                    app.status = "confirm auto-sync".to_string();
+                                }
+                                WizardStep::AutoSyncConfirm => {
+                                    state.enable_auto_sync = state.selected_option == 0;
+                                    state.step = WizardStep::Summary;
+                                    app.modal = Some(Modal::Wizard(state));
+                                    app.status = "review and confirm".to_string();
+                                }
+                                WizardStep::Summary => {
+                                    // Create configuration
+                                    let report = action_executor.init_config()?;
+                                    app.status = "initialized configuration".to_string();
+                                    app.modal = Some(Modal::Result(report));
+                                    app.config_missing = false;
+                                    app.refresh();
+                                }
+                            }
+                        }
+                        KeyCode::Up => {
+                            match state.step {
+                                WizardStep::ConfigLocation | WizardStep::AutoSyncConfirm => {
+                                    state.selected_option = state.selected_option.saturating_sub(1);
+                                    app.modal = Some(Modal::Wizard(state));
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Down => {
+                            match state.step {
+                                WizardStep::ConfigLocation | WizardStep::AutoSyncConfirm => {
+                                    state.selected_option = (state.selected_option + 1).min(1);
+                                    app.modal = Some(Modal::Wizard(state));
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            if matches!(state.step, WizardStep::WorkspaceSetup) {
+                                state.workspace_input.push(c);
+                                app.modal = Some(Modal::Wizard(state));
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if matches!(state.step, WizardStep::WorkspaceSetup) {
+                                state.workspace_input.pop();
+                                app.modal = Some(Modal::Wizard(state));
+                            }
+                        }
                         _ => {}
                     }
                     continue;
@@ -1608,8 +1824,13 @@ fn run_loop(
                         app.modal = Some(Modal::Help)
                     }
                     KeyCode::Char('i') => {
-                        app.modal_scroll = 0;
-                        app.modal = Some(Modal::Confirm(PendingAction::Install))
+                        if app.config_missing {
+                            let report = action_executor.init_config()?;
+                            app.status = "initialized configuration".to_string();
+                            app.modal = Some(Modal::Result(report));
+                            app.config_missing = false;
+                            app.refresh();
+                        }
                     }
                     KeyCode::Char('u') => {
                         app.modal_scroll = 0;
@@ -1696,10 +1917,6 @@ fn run_command(
             app.modal = Some(Modal::Confirm(PendingAction::Clean));
             app.status = "confirm clean".to_string();
         }
-        "install" => {
-            app.modal = Some(Modal::Confirm(PendingAction::Install));
-            app.status = "confirm install".to_string();
-        }
         "update" => {
             app.modal = Some(Modal::Confirm(PendingAction::Update));
             app.status = "confirm update".to_string();
@@ -1717,58 +1934,68 @@ fn run_command(
             app.status = "confirm doctor".to_string();
         }
         "refresh" => app.refresh(),
+        "list-skills" => {
+            app.filter_query = "type:skill".to_string();
+            app.normalize_selection();
+            app.detail_scroll = 0;
+            app.status = "filtered to skills".to_string();
+        }
+        "list-agents" => {
+            app.filter_query = "type:agent".to_string();
+            app.normalize_selection();
+            app.detail_scroll = 0;
+            app.status = "filtered to agents".to_string();
+        }
+        "list-commands" => {
+            app.filter_query = "type:command".to_string();
+            app.normalize_selection();
+            app.detail_scroll = 0;
+            app.status = "filtered to commands".to_string();
+        }
         "toggle-target" => {
             app.sync_target = next_sync_target(&app.sync_target);
             app.status = format!("sync target set to {}", app.sync_target);
         }
-        "bundle-list" => {
-            match executor.bundle_list_text() {
-                Ok(text) => {
-                    app.modal = Some(Modal::Result(text));
-                    app.status = "bundle list".to_string();
-                }
-                Err(e) => {
-                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
-                    app.status = "bundle list failed".to_string();
-                }
+        "bundle-list" => match executor.bundle_list_text() {
+            Ok(text) => {
+                app.modal = Some(Modal::Result(text));
+                app.status = "bundle list".to_string();
             }
-        }
-        "bundle-current" => {
-            match executor.bundle_current_text() {
-                Ok(text) => {
-                    app.modal = Some(Modal::Result(text));
-                    app.status = "bundle current".to_string();
-                }
-                Err(e) => {
-                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
-                    app.status = "bundle current failed".to_string();
-                }
+            Err(e) => {
+                app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                app.status = "bundle list failed".to_string();
             }
-        }
-        "model-list" => {
-            match executor.model_list_text() {
-                Ok(text) => {
-                    app.modal = Some(Modal::Result(text));
-                    app.status = "model list".to_string();
-                }
-                Err(e) => {
-                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
-                    app.status = "model list failed".to_string();
-                }
+        },
+        "bundle-current" => match executor.bundle_current_text() {
+            Ok(text) => {
+                app.modal = Some(Modal::Result(text));
+                app.status = "bundle current".to_string();
             }
-        }
-        "model-show" => {
-            match executor.model_show_text() {
-                Ok(text) => {
-                    app.modal = Some(Modal::Result(text));
-                    app.status = "model show".to_string();
-                }
-                Err(e) => {
-                    app.modal = Some(Modal::Result(format!("Error: {}", e)));
-                    app.status = "model show failed".to_string();
-                }
+            Err(e) => {
+                app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                app.status = "bundle current failed".to_string();
             }
-        }
+        },
+        "model-list" => match executor.model_list_text() {
+            Ok(text) => {
+                app.modal = Some(Modal::Result(text));
+                app.status = "model list".to_string();
+            }
+            Err(e) => {
+                app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                app.status = "model list failed".to_string();
+            }
+        },
+        "model-show" => match executor.model_show_text() {
+            Ok(text) => {
+                app.modal = Some(Modal::Result(text));
+                app.status = "model show".to_string();
+            }
+            Err(e) => {
+                app.modal = Some(Modal::Result(format!("Error: {}", e)));
+                app.status = "model show failed".to_string();
+            }
+        },
         "help" => app.modal = Some(Modal::Help),
         "filter" => enter_filter_mode(app),
         other => {
@@ -1826,17 +2053,6 @@ fn execute_action(
                 app.status = format!("resynced {}", name);
                 app.modal = Some(Modal::Result(format!(
                     "Resynced {} to runtime targets.",
-                    name
-                )));
-                app.refresh();
-            }
-        }
-        PendingAction::Install => {
-            if let Some(name) = app.selected_filtered_name() {
-                action_executor.install_skill(Some(name.clone()))?;
-                app.status = format!("installed {} locally", name);
-                app.modal = Some(Modal::Result(format!(
-                    "Installed {} into local managed state.",
                     name
                 )));
                 app.refresh();
@@ -1923,7 +2139,6 @@ fn action_label(action: PendingAction) -> &'static str {
         PendingAction::Disable => "disable",
         PendingAction::Unsync => "unsync",
         PendingAction::Resync => "resync",
-        PendingAction::Install => "install",
         PendingAction::Update => "update",
         PendingAction::Sync => "sync",
         PendingAction::Remove => "remove",
@@ -1991,6 +2206,13 @@ fn truncate_with_ellipsis(input: &str, max_width: usize) -> String {
 
 fn format_skill_row(skill: &SkillSummary, max_width: usize, theme: &Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
+
+    let badge = match skill.asset_type.as_str() {
+        "agent" => Span::styled("[A] ", theme.accent_style()),
+        "command" => Span::styled("[C] ", theme.healthy_style()),
+        _ => Span::styled("[S] ", theme.info_style()),
+    };
+    spans.push(badge);
 
     let name_style = if skill.enabled {
         Style::default()
@@ -2066,17 +2288,9 @@ mod tests {
         fn add_skill(&self, repo: String) -> Result<String, Box<dyn std::error::Error>> {
             self.calls.borrow_mut().push(format!("add:{repo}"));
             Ok(format!(
-                "Added local source '{}' to configuration. Next: install to prepare it locally.",
+                "Added local skill source '{}' to configuration. Next: skillmine sync --target opencode.",
                 repo
             ))
-        }
-
-        fn install_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-            self.calls.borrow_mut().push(format!(
-                "install:{}",
-                name.unwrap_or_else(|| "all".to_string())
-            ));
-            Ok(())
         }
 
         fn update_skill(&self, name: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -2160,9 +2374,14 @@ mod tests {
                 output_dir.unwrap_or_else(|| "cwd".to_string())
             ));
             Ok(format!(
-                "Created skill package at /tmp/{}\nNext:\n  1. skillmine add /tmp/{}\n  2. skillmine install\n  3. skillmine sync --target=opencode",
+                "Created skill package at /tmp/{}\nNext:\n  1. skillmine add /tmp/{}\n  2. skillmine sync --target=opencode",
                 name, name
             ))
+        }
+
+        fn init_config(&self) -> Result<String, Box<dyn std::error::Error>> {
+            self.calls.borrow_mut().push("init-config".to_string());
+            Ok("Initialized configuration. Welcome to Skillmine.".to_string())
         }
 
         fn bundle_list_text(&self) -> Result<String, Box<dyn std::error::Error>> {
@@ -2193,6 +2412,7 @@ mod tests {
     fn sample_skill_with(name: &str, source: &str, statuses: Vec<&str>) -> SkillSummary {
         SkillSummary {
             name: name.to_string(),
+            asset_type: "skill".to_string(),
             source: source.to_string(),
             enabled: true,
             statuses: statuses.into_iter().map(str::to_string).collect(),
@@ -2220,22 +2440,6 @@ mod tests {
     }
 
     #[test]
-    fn tui_action_install_runs_selected_skill() {
-        let mut app = App::new(vec![sample_skill("demo")]);
-        let executor = FakeExecutor::default();
-
-        let result = execute_action(&mut app, PendingAction::Install, &executor);
-
-        assert!(result.is_ok());
-        assert_eq!(app.status, "refreshed summaries");
-        assert!(matches!(
-            &app.modal,
-            Some(Modal::Result(msg)) if msg == "Installed demo into local managed state."
-        ));
-        assert_eq!(executor.calls(), vec!["install:demo"]);
-    }
-
-    #[test]
     fn add_mode_uses_executor_report_text() {
         let executor = FakeExecutor::default();
         let report = executor
@@ -2244,7 +2448,7 @@ mod tests {
 
         assert_eq!(
             report,
-            "Added local source '/tmp/opencode-skill-local-demo' to configuration. Next: install to prepare it locally."
+            "Added local skill source '/tmp/opencode-skill-local-demo' to configuration. Next: skillmine sync --target opencode."
         );
     }
 
@@ -2339,6 +2543,23 @@ mod tests {
         let filtered = app.filtered_indices();
 
         assert_eq!(filtered, vec![0]);
+    }
+
+    #[test]
+    fn filter_query_supports_structured_type_tokens() {
+        let mut skill = sample_skill("demo-skill");
+        skill.asset_type = "skill".to_string();
+        let mut agent = sample_skill("planner");
+        agent.asset_type = "agent".to_string();
+        let mut command = sample_skill("pre-commit");
+        command.asset_type = "command".to_string();
+
+        let mut app = App::new(vec![skill, agent, command]);
+        app.filter_query = "type:agent".to_string();
+
+        let filtered = app.filtered_indices();
+
+        assert_eq!(filtered, vec![1]);
     }
 
     #[test]
@@ -2659,7 +2880,6 @@ mod tests {
 
         assert!(report.contains("Created skill package at /tmp/my-skill"));
         assert!(report.contains("skillmine add /tmp/my-skill"));
-        assert!(report.contains("skillmine install"));
         assert!(report.contains("skillmine sync --target=opencode"));
     }
 
@@ -2694,6 +2914,22 @@ mod tests {
     }
 
     #[test]
+    fn init_executor_returns_welcome_text() {
+        let executor = FakeExecutor::default();
+        let report = executor.init_config().unwrap();
+
+        assert_eq!(report, "Initialized configuration. Welcome to Skillmine.");
+        assert_eq!(executor.calls(), vec!["init-config"]);
+    }
+
+    #[test]
+    fn empty_state_without_missing_config_is_not_first_run_state() {
+        let app = App::new(vec![]);
+        assert!(!app.config_missing);
+        assert!(app.skills.is_empty());
+    }
+
+    #[test]
     fn command_items_returns_descriptions() {
         let app = App::new(vec![]);
         let items = app.command_items();
@@ -2706,10 +2942,35 @@ mod tests {
     fn command_palette_includes_bundle_and_model_commands() {
         let app = App::new(vec![]);
         let names: Vec<&str> = app.command_items().iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"list-skills"));
+        assert!(names.contains(&"list-agents"));
+        assert!(names.contains(&"list-commands"));
         assert!(names.contains(&"bundle-list"));
         assert!(names.contains(&"bundle-current"));
         assert!(names.contains(&"model-list"));
         assert!(names.contains(&"model-show"));
+    }
+
+    #[test]
+    fn run_command_list_agents_sets_type_filter() {
+        let mut app = App::new(vec![sample_skill("demo")]);
+        app.command_query = "list-agents".to_string();
+
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
+
+        assert_eq!(app.filter_query, "type:agent");
+        assert_eq!(app.status, "filtered to agents");
+    }
+
+    #[test]
+    fn run_command_list_commands_sets_type_filter() {
+        let mut app = App::new(vec![sample_skill("demo")]);
+        app.command_query = "list-commands".to_string();
+
+        run_command(&mut app, &FakeExecutor::default()).unwrap();
+
+        assert_eq!(app.filter_query, "type:command");
+        assert_eq!(app.status, "filtered to commands");
     }
 
     #[test]

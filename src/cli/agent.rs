@@ -228,7 +228,7 @@ fn effect_execute_create_plan(plan: &CreateAgentPlan) -> Result<(), Box<dyn std:
 fn emit_create_success(target_dir: &Path) -> String {
     let path = target_dir.display();
     format!(
-        "Created agent at {}\nAutomatically registered and ready to sync.",
+        "Created agent at {}\n\nNext steps:\n  skillmine sync --target opencode",
         path
     )
 }
@@ -267,6 +267,7 @@ pub(crate) fn create_created_agent(
     })
 }
 
+#[allow(dead_code)]
 pub async fn create(
     name: String,
     output_dir: Option<String>,

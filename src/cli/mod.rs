@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use crate::resolved_state::{lockfile_path_for, LockedSkill, Lockfile};
 use crate::source_refs::version::resolve_version_source;
@@ -405,22 +406,183 @@ pub fn load_skill_summaries() -> Result<Vec<SkillSummary>, Box<dyn std::error::E
 }
 
 pub async fn init(local: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = if local {
-        PathBuf::from("skills.toml")
-    } else {
-        dirs::config_dir()
-            .ok_or("Could not find config directory")?
-            .join("skillmine")
-            .join("skills.toml")
-    };
+    run_init_wizard(local).await
+}
 
-    if config_path.exists() {
-        return Err(format!("Configuration already exists at {:?}", config_path).into());
+async fn run_init_wizard(local: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // Welcome
+    println!("");
+    println!("==============================================================");
+    println!("              Welcome to Skillmine!");
+    println!("==============================================================");
+    println!("");
+    println!("Skillmine helps you create, manage, and sync skills,");
+    println!("commands, agents, bundles, and model profiles.");
+    println!("");
+
+    if local {
+        // Local config mode - use defaults
+        let config_path = PathBuf::from("skills.toml");
+        if config_path.exists() {
+            return Err(format!("Configuration already exists at {:?}", config_path).into());
+        }
+        effect_write_default_config(&config_path)?;
+        emit_init_success(&config_path);
+        return Ok(());
     }
 
-    effect_write_default_config(&config_path)?;
+    // Global config - interactive wizard
+    let default_config_path = dirs::config_dir()
+        .ok_or("Could not find config directory")?
+        .join("skillmine")
+        .join("skills.toml");
+
+    if default_config_path.exists() {
+        return Err(format!("Configuration already exists at {:?}", default_config_path).into());
+    }
+
+    // Step 1: Config Location
+    println!("------------------------------------------------------------");
+    println!("Configuration Location");
+    println!("------------------------------------------------------------");
+    println!("");
+    println!("Where should Skillmine store its configuration?");
+    println!("");
+    println!("  [1] Global - ~/.config/skillmine/skills.toml (recommended)");
+    println!("  [2] Local  - ./skills.toml (project-specific)");
+    println!("");
+    print!("Enter 1 or 2 [1]: ");
+    let _ = std::io::stdout().flush();
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let use_local = input.trim() == "2";
+
+    // Step 2: Workspace
+    let workspace_default = "~/Project/Skills";
+    println!("");
+    println!("------------------------------------------------------------");
+    println!("Workspace Setup");
+    println!("------------------------------------------------------------");
+    println!("");
+    println!("This is where 'skillmine create' will create new assets.");
+    println!("");
+    print!("Enter workspace path [{}]: ", workspace_default);
+    let _ = std::io::stdout().flush();
+
+    let mut workspace_input = String::new();
+    std::io::stdin().read_line(&mut workspace_input)?;
+    let workspace = if workspace_input.trim().is_empty() {
+        workspace_default.to_string()
+    } else {
+        workspace_input.trim().to_string()
+    };
+
+    // Step 3: Auto-sync
+    println!("");
+    println!("------------------------------------------------------------");
+    println!("Auto-Sync Settings");
+    println!("------------------------------------------------------------");
+    println!("");
+    println!("Auto-sync automatically updates opencode config when you");
+    println!("add or remove assets.");
+    println!("");
+    println!("  [1] Yes - Enable auto-sync (recommended)");
+    println!("  [2] No  - Manual sync only");
+    println!("");
+    print!("Enter 1 or 2 [1]: ");
+    let _ = std::io::stdout().flush();
+
+    let mut sync_input = String::new();
+    std::io::stdin().read_line(&mut sync_input)?;
+    let auto_sync = sync_input.trim() != "2";
+
+    // Step 4: Summary
+    println!("");
+    println!("==============================================================");
+    println!("Summary");
+    println!("==============================================================");
+    println!("");
+    println!("Configuration:");
+    println!("  Location:  {}", if use_local { "Local (./skills.toml)" } else { "Global (~/.config/skillmine/)" });
+    println!("  Workspace: {}", workspace);
+    println!("  Auto-sync: {}", if auto_sync { "Enabled" } else { "Disabled" });
+    println!("");
+    print!("Create configuration? [Y/n]: ");
+    let _ = std::io::stdout().flush();
+
+    let mut confirm = String::new();
+    std::io::stdin().read_line(&mut confirm)?;
+    let confirmed = confirm.trim().is_empty() || confirm.trim().to_lowercase() == "y";
+
+    if !confirmed {
+        println!("");
+        println!("Configuration cancelled.");
+        return Ok(());
+    }
+
+    // Create config
+    let config_path = if use_local {
+        PathBuf::from("skills.toml")
+    } else {
+        default_config_path
+    };
+
+    effect_write_config_with_settings(&config_path, &workspace, auto_sync)?;
+
+    println!("");
+    println!("==============================================================");
+    println!("Configuration created successfully!");
+    println!("==============================================================");
+    println!("");
     emit_init_success(&config_path);
 
+    Ok(())
+}
+
+fn effect_write_config_with_settings(
+    config_path: &Path,
+    workspace: &str,
+    auto_sync: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_dir = config_path.parent().ok_or("Invalid config path")?;
+    std::fs::create_dir_all(config_dir)?;
+
+    let auto_sync_str = if auto_sync { "true" } else { "false" };
+
+    let config_content = format!(r#"version = "1.0"
+
+[settings]
+# Workspace directory: where 'skillmine create' creates new assets
+workspace = "{}"
+auto_sync = {}
+
+[skills]
+# Skills: instruction modules for domain knowledge and workflows
+# my-skill = {{ path = "~/Project/Skills/my-skill" }}
+
+[agents]
+# Agents: role-based assistants loaded from AGENT.md
+# planner = {{ path = "~/Project/Skills/my-planner" }}
+
+[commands]
+# Commands: slash-style command assets loaded from COMMAND.md
+# pre-commit = {{ path = "~/Project/Skills/my-pre-commit" }}
+
+# [bundles.dev-workflow]
+# description = "Standard development workflow"
+# skills = ["my-skill"]
+# commands = ["pre-commit"]
+
+# [model-profiles.focused]
+# model = "anthropic/claude-opus-4-6"
+# description = "Complex tasks, quality first"
+"#,
+        workspace,
+        auto_sync_str
+    );
+
+    std::fs::write(config_path, config_content)?;
     Ok(())
 }
 
@@ -480,9 +642,10 @@ pub async fn config_show() -> Result<String, Box<dyn std::error::Error>> {
     Ok(format_config_show(&config, &config_path))
 }
 
-pub async fn create_and_add(
+pub async fn create_asset_and_add(
     name: String,
     output_dir: Option<String>,
+    _asset_type: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let config_path = crate::config::io::find_local_config()?;
     let created = create::create_created_skill(name, output_dir)?;
@@ -1030,7 +1193,7 @@ pub async fn update(_skill: Option<String>) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-pub async fn remove(name: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn remove(name: String, _keep_synced: bool) -> Result<(), Box<dyn std::error::Error>> {
     let (config_path, mut config, lockfile_path, lockfile) = config_and_lockfile()?;
 
     if config.skills.remove(&name).is_none() {

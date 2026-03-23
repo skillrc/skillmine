@@ -88,6 +88,10 @@ fn default_create_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .join("skills"))
 }
 
+pub(crate) fn expand_home_dir_pub(path: &str) -> PathBuf {
+    expand_home_dir(path)
+}
+
 fn expand_home_dir(path: &str) -> PathBuf {
     if path == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));
@@ -255,7 +259,7 @@ fn effect_execute_create_plan(plan: &CreatePlan) -> Result<(), Box<dyn std::erro
 fn emit_create_success(target_dir: &Path) -> String {
     let path = target_dir.display();
     format!(
-        "Created skill package at {}\n\nNext steps:\n  skillmine add {}\n  skillmine install\n  skillmine sync --target=opencode",
+        "Created skill package at {}\n\nNext steps:\n  skillmine add {}\n  skillmine sync --target=opencode",
         path, path
     )
 }
@@ -315,6 +319,7 @@ pub(crate) fn create_created_skill(
 }
 
 /// Async entry point for CLI
+#[allow(dead_code)]
 pub async fn create(
     name: String,
     output_dir: Option<String>,
