@@ -342,10 +342,12 @@ impl Config {
         self.skills.insert(name.into(), skill);
     }
 
+#[allow(dead_code)]
     pub fn add_agent(&mut self, name: impl Into<String>, agent: ConfigSkill) {
         self.agents.insert(name.into(), agent);
     }
 
+    #[allow(dead_code)]
     pub fn add_command(&mut self, name: impl Into<String>, command: ConfigSkill) {
         self.commands.insert(name.into(), command);
     }

@@ -316,16 +316,22 @@ pub async fn doctor_summary() -> Result<String, Box<dyn std::error::Error>> {
 pub async fn clean(all: bool) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = super::data_root()?;
     let tmp_dir = data_dir.join("tmp");
-    if tmp_dir.exists() {
-        std::fs::remove_dir_all(&tmp_dir)?;
-        println!("✓ Removed temporary directory {}", tmp_dir.display());
+    match std::fs::remove_dir_all(&tmp_dir) {
+        Ok(()) => {
+            println!("✓ Removed temporary directory {}", tmp_dir.display());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
 
     if all {
         let store_dir = data_dir.join("store");
-        if store_dir.exists() {
-            std::fs::remove_dir_all(&store_dir)?;
-            println!("✓ Removed store directory {}", store_dir.display());
+        match std::fs::remove_dir_all(&store_dir) {
+            Ok(()) => {
+                println!("✓ Removed store directory {}", store_dir.display());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
     }
 

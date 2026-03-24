@@ -16,7 +16,6 @@ pub mod model;
 pub mod pure;
 pub mod state;
 pub mod summary;
-pub use create::create;
 pub use summary::SkillSummary;
 use pure::{describe_locked_skill, describe_skill_source};
 use state::{classify_outdated, format_outdated_state, format_statuses, skill_statuses};
@@ -334,6 +333,7 @@ fn build_locked_skill(
     }
 }
 
+#[allow(dead_code)]
 fn refresh_lockfile_from_current_state(
     config_path: &Path,
     config: &crate::config::Config,
@@ -684,146 +684,6 @@ pub async fn resync(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = crate::config::io::find_config()?;
     effect_set_skill_sync_enabled(&config_path, &name, true)?;
     emit_set_skill_sync_enabled(&name, true);
-    Ok(())
-}
-
-pub async fn install(force: bool, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::installer::{ContentStore, InstallContext, InstallOutcomeKind, InstallSummary};
-
-    let config_path = crate::config::io::find_config()?;
-    let config = crate::config::io::load_config(&config_path)?;
-    let lockfile_path = lockfile_path_for(&config_path);
-    let existing_lockfile = if lockfile_path.exists() {
-        Some(Lockfile::load(&lockfile_path)?)
-    } else {
-        None
-    };
-
-    if config.skills.is_empty() {
-        println!("No skill sources configured. Run 'skillmine add <source>' to add one.");
-        return Ok(());
-    }
-
-    let store = ContentStore::default();
-    store.init()?;
-
-    let install_dir = tmp_root()?;
-    std::fs::create_dir_all(&install_dir)?;
-    let install_context = InstallContext {
-        install_dir: install_dir.clone(),
-        force,
-        verbose,
-    };
-
-    let outcomes = crate::installer::install_many_skills(
-        config
-            .skills
-            .iter()
-            .filter(|(_, skill)| skill.enabled)
-            .map(|(name, skill)| (name.clone(), skill.clone()))
-            .collect(),
-        config.clone(),
-        existing_lockfile.clone(),
-        store.clone(),
-        install_context,
-        config.skills.len().max(1),
-    )
-    .await;
-
-    let mut summary = InstallSummary::default();
-
-    for outcome in &outcomes {
-        let name = &outcome.name;
-        if let Some(message) = &outcome.message {
-            match outcome.kind {
-                InstallOutcomeKind::Installed => {
-                    if verbose {
-                        println!("  ✓ {}", message);
-                    }
-                }
-                InstallOutcomeKind::Skipped => {
-                    eprintln!("Skipping '{}': {}", name, message);
-                }
-                InstallOutcomeKind::Error => {
-                    eprintln!("{}", message);
-                }
-            }
-        }
-        summary.record(outcome);
-    }
-
-    println!("\nInstallation complete:");
-    println!("  {} installed", summary.installed);
-    println!("  {} skipped", summary.skipped);
-    if summary.errors > 0 {
-        println!("  {} errors", summary.errors);
-    }
-
-    refresh_lockfile_from_current_state(&config_path, &config, existing_lockfile.as_ref())?;
-
-    Ok(())
-}
-
-pub async fn install_selected(name: Option<String>, force: bool, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    if name.is_none() {
-        return install(force, verbose).await;
-    }
-
-    use crate::installer::{ContentStore, InstallContext, InstallOutcomeKind};
-
-    let config_path = crate::config::io::find_config()?;
-    let config = crate::config::io::load_config(&config_path)?;
-    let lockfile_path = lockfile_path_for(&config_path);
-    let existing_lockfile = if lockfile_path.exists() {
-        Some(Lockfile::load(&lockfile_path)?)
-    } else {
-        None
-    };
-
-    let selected = name.unwrap();
-    let Some(skill) = config.skills.get(&selected) else {
-        return Err(format!("Skill '{}' not found", selected).into());
-    };
-
-    if !skill.enabled {
-        println!("Skipping '{}': disabled", selected);
-        return Ok(());
-    }
-
-    let store = ContentStore::default();
-    store.init()?;
-
-    let install_dir = tmp_root()?;
-    std::fs::create_dir_all(&install_dir)?;
-    let install_context = InstallContext {
-        install_dir,
-        force,
-        verbose,
-    };
-
-    let outcome = crate::installer::install_skill_to_store(
-        &selected,
-        skill,
-        &config,
-        existing_lockfile.as_ref(),
-        &store,
-        &install_context,
-    );
-
-    match outcome.kind {
-        InstallOutcomeKind::Installed => {}
-        InstallOutcomeKind::Skipped | InstallOutcomeKind::Error => {
-            return Err(outcome
-                .message
-                .unwrap_or_else(|| format!("Failed to install '{}'", selected))
-                .into())
-        }
-    }
-
-    refresh_lockfile_from_current_state(&config_path, &config, existing_lockfile.as_ref())?;
-    if verbose {
-        println!("✓ Installed '{}'", selected);
-    }
     Ok(())
 }
 
@@ -1193,7 +1053,7 @@ pub async fn update(_skill: Option<String>) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-pub async fn remove(name: String, _keep_synced: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn remove(name: String, keep_synced: bool) -> Result<(), Box<dyn std::error::Error>> {
     let (config_path, mut config, lockfile_path, lockfile) = config_and_lockfile()?;
 
     if config.skills.remove(&name).is_none() {
@@ -1207,12 +1067,21 @@ pub async fn remove(name: String, _keep_synced: bool) -> Result<(), Box<dyn std:
         lockfile.save(&lockfile_path)?;
     }
 
-    let tmp_dir = tmp_root()?.join(&name);
-    if tmp_dir.exists() {
-        std::fs::remove_dir_all(&tmp_dir)?;
+    // Only remove tmp directory if not keeping synced symlinks
+    if !keep_synced {
+        let tmp_dir = tmp_root()?.join(&name);
+        match std::fs::remove_dir_all(&tmp_dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
     }
 
-    println!("✓ Removed '{}' from skills.toml", name);
+    if keep_synced {
+        println!("✓ Removed '{}' from config (symlinks preserved)", name);
+    } else {
+        println!("✓ Removed '{}' from config", name);
+    }
     Ok(())
 }
 

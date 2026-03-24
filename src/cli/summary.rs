@@ -94,6 +94,7 @@ pub fn skill_summary(
     }
 }
 
+#[allow(dead_code)]
 pub fn asset_summary(
     name: &str,
     asset_type: &str,

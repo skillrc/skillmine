@@ -88,6 +88,7 @@ fn default_create_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .join("skills"))
 }
 
+#[allow(dead_code)]
 pub(crate) fn expand_home_dir_pub(path: &str) -> PathBuf {
     expand_home_dir(path)
 }
